@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Neon Bay: Sunset Run — an open-world sunset crime game</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #160a26; height: 100%; }
+  body {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    font-family: sans-serif; color: #fff3e0;
+  }
+  h1 { font-size: 20px; margin: 10px 0 4px 0; letter-spacing: 1px; }
+  h1 span { color: #ff2e88; }
+  p.sub { font-size: 13px; color: #cbb8e0; margin: 0 0 10px 0; text-align: center; }
+  #wrap { position: relative; }
+  canvas {
+    display: block; width: 960px; height: 600px; max-width: 96vw;
+    background: #1a0f2e; border: 3px solid #ff2e88; border-radius: 10px;
+    box-shadow: 0 0 42px rgba(255, 46, 136, 0.45);
+  }
+  #loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #ffd166; font-size: 14px; }
+  footer { font-size: 12px; color: #9d8bb5; margin-top: 10px; text-align: center; }
+  footer b { color: #ffd166; }
+</style>
+</head>
+<body>
+<h1>NEON BAY <span>• SUNSET RUN</span></h1>
+<p class="sub">An original open-world sunset crime game. Explore Neon Bay on foot and by car, steal cars, outrun the Bay PD, and run Rico&rsquo;s jobs.</p>
+<div id="wrap">
+  <canvas id="game" width="960" height="600"></canvas>
+  <div id="loading">Loading Neon Bay&hellip;</div>
+</div>
+<footer><b>WASD / arrows</b> drive &amp; walk &nbsp;•&nbsp; <b>E</b> enter / steal car &nbsp;•&nbsp; <b>SPACE</b> brake &nbsp;•&nbsp; <b>ENTER</b> start job &nbsp;•&nbsp; <b>P</b> pause &nbsp;•&nbsp; <b>M</b> mute &nbsp;•&nbsp; Progress saves in your browser.</footer>
+<script src="src/config.js"></script>
+<script src="src/world.js"></script>
+<script src="src/input.js"></script>
+<script src="src/audio.js"></script>
+<script src="src/entities.js"></script>
+<script src="src/missions.js"></script>
+<script src="src/render.js"></script>
+<script src="src/shots.js"></script>
+<script src="src/main.js"></script>
+<script>
+  // Boot the game once every script above has loaded. No network requests:
+  // every file the page loads lives under game/.
+  window.NeonBay.boot();
+</script>
+</body>
+</html>
