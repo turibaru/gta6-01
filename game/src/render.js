@@ -417,7 +417,9 @@
     ctx.font = '12px sans-serif';
     ctx.fillText(state.wanted > 0 ? 'WANTED — Bay PD inbound' : 'No heat', 200, 130);
     // Round 3: flashing air-unit warning while AIR-1 is overhead.
-    if (state.heli && state.heli.active) {
+    // Round 4 hero frame: off — the five gold stars already carry the
+    // heat, and this line lands on the SALT AIR CAFE sign in the shot.
+    if (state.heli && state.heli.active && !state.heroFrame) {
       var blink = Math.sin(state.time * 8) > 0;
       ctx.fillStyle = blink ? '#ff4757' : '#ffb347';
       ctx.font = 'bold 14px sans-serif';

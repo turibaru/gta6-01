@@ -29,8 +29,8 @@
       {
         name: 'mission',
         file: '4-mission.jpg',
-        shot: 'mission',
-        caption: 'Mission 6 shootout — scattergun out, Coral runners closing in, tracers in the air, beacon pulsing over the arcade.'
+        shot: 'hero',
+        caption: 'Mission 7 hero frame — KINGPIN\'S LAST RUN under five stars: the money truck at the Pier, the beacon over the boat, AIR-1 overhead, a roadblock and Bay PD cruisers closing in, neon radar tracking it all.'
       }
     ]
   };

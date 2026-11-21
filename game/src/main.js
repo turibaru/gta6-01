@@ -98,7 +98,10 @@
       bestCash: save.bestCash,
       bestScore: save.bestScore,
       startButton: null,
-      shot: null
+      shot: null,
+      // Round 4 hero frame: true only while the ?shot=hero preset is
+      // staged, so the render path can drop its duplicate target marker.
+      heroFrame: false
     };
     state.missions.showMessage('Welcome to Neon Bay. Press ENTER to start.', 999);
     return state;
@@ -450,7 +453,9 @@
     NB.Render.drawGround(ctx, state.cam, state.city, state.time);
     NB.Render.drawCityProps(ctx, state.cam, state.city, state.time);
     NB.Garage.drawGarageMarker(ctx, state, state.time);
-    if (state.missions.phase === 'active') {
+    // Round 4 hero frame: the beacon already marks the target, so the
+    // plain marker stays off and the frame keeps a single focal point.
+    if (state.missions.phase === 'active' && !state.heroFrame) {
       NB.Render.drawMarker(ctx, state.missions.current().target, state.time);
     }
     var i;
@@ -605,6 +610,19 @@
       state.wantedTimer = 999;
       fanPolice(1700, 1300, 2);
       clusterTraffic(1700, 1300, 4);
+    } else if (name === 'hero') {
+      // Hero frame: mission 7 at the Pier under five stars. The truck,
+      // the beacon and the NBPD response are staged exactly by
+      // stageHeroFrame after the settle loop, so this branch only opens
+      // the job and seeds the ambient traffic to cluster around the pier.
+      enterCarAt(state, 2930, 330);
+      state.missions.index = 6;
+      state.missions.start(state);
+      state.missions.timeLeft = 118;
+      state.wanted = 5;
+      state.wantedTimer = 999;
+      state.heli.active = true;
+      clusterTraffic(2930, 330, 6);
     }
     // Let traffic and peds settle for a few frames before the shot.
     for (var i = 0; i < 40; i++) {
@@ -614,6 +632,82 @@
     }
     state.cam.x = Math.max(0, Math.min(C.worldWidth - state.viewW, p.x - state.viewW / 2));
     state.cam.y = Math.max(0, Math.min(C.worldHeight - state.viewH, p.y - state.viewH / 2));
+    // Round 4 hero frame: exact staging and camera offset, applied
+    // after the settle loop so nothing drifts before the screenshot.
+    if (name === 'hero') stageHeroFrame(state);
+  }
+
+  // Round 4 hero frame: one deterministic composition for mission 7
+  // (KINGPIN'S LAST RUN) — the money truck in the foreground, the Pier
+  // beacon above it, AIR-1 and two cruisers in the frame, a roadblock
+  // between the truck and the target, pier signage and string lights in
+  // view, and only the key HUD (objective banner, wanted stars, neon
+  // radar) on screen. Canvas is 960x600, zoom 1.5, so the camera sees
+  // a 640x400 world window; the camera sits at the east clamp
+  // (x 2560, y 50) which puts the truck lower-centre-right at screen
+  // (555, 420) and the beacon upper-centre at screen (510, 225).
+  // Everything not part of the composition is parked off-frame or
+  // switched off: the plain target marker (the beacon already marks
+  // the target), the centre message plate (the banner already carries
+  // title + timer), the wanted alert (five stars already say it) and
+  // the crew dialogue box (its plate would cover the truck).
+  function stageHeroFrame(state) {
+    var p = state.player;
+    var i;
+    state.heroFrame = true;
+    // Truck on the sand by the pier, nose east toward the boat.
+    p.x = 2930; p.y = 330; p.angle = 0;
+    if (p.car) { p.car.x = 2930; p.car.y = 330; p.car.angle = 0; p.car.speed = 0; }
+    // Camera: east clamp — beach, water and pier lights all read.
+    state.cam.x = 2560;
+    state.cam.y = 50;
+    // AIR-1 upper-left, searchlight sweeping down toward the pier.
+    // Parked at canvas (300,195): below the cafe sign and the wanted
+    // text, left of the cruisers and the beacon ring — body, rotor and
+    // tail all clear of every HUD plate and sign.
+    state.heli.active = true;
+    state.heli.x = 2760; state.heli.y = 180;
+    state.heli.sweep = 0; state.heli.rotor = 0; state.heli.phase = 0;
+    // Two cruisers on the pier road: one ahead by the cafe sign, one
+    // closing from behind — both clear of the HUD plates.
+    state.police.length = 0;
+    state.police.push(NB.Entities.makeCar(2848, 150, Math.PI / 2, '#1a1a2e', 'police'));
+    state.police.push(NB.Entities.makeCar(2848, 390, -Math.PI / 2, '#1a1a2e', 'police'));
+    // One roadblock on the pier road between the truck and the beacon.
+    state.roadblocks.length = 0;
+    state.roadblocks.push({ x: 2848, y: 320, angle: Math.PI / 2, health: 60 });
+    // Two beach cars for depth: one by the pier lights, one mid-frame
+    // left. The rest of the traffic parks off-frame so the shot stays
+    // clean.
+    if (state.traffic.length > 0) {
+      var t1 = state.traffic[0];
+      t1.x = 2970; t1.y = 280; t1.angle = -Math.PI / 2; t1.speed = 0; t1.targetSpeed = 0;
+    }
+    if (state.traffic.length > 1) {
+      var t2 = state.traffic[1];
+      t2.x = 2620; t2.y = 220; t2.angle = 0; t2.speed = 0; t2.targetSpeed = 0;
+    }
+    for (i = 2; i < state.traffic.length; i++) {
+      state.traffic[i].x = 200; state.traffic[i].y = 200;
+      state.traffic[i].speed = 0; state.traffic[i].targetSpeed = 0;
+    }
+    // Four pedestrians on the pier approach; the rest wait off-frame.
+    var pedSpots = [[2900, 300], [2960, 260], [2780, 380], [2650, 200]];
+    for (i = 0; i < state.peds.length; i++) {
+      if (i < pedSpots.length) { state.peds[i].x = pedSpots[i][0]; state.peds[i].y = pedSpots[i][1]; }
+      else { state.peds[i].x = 200; state.peds[i].y = 200; }
+    }
+    // Parked cars other than the player's truck wait off-frame.
+    for (i = 1; i < state.parked.length; i++) {
+      state.parked[i].x = 200; state.parked[i].y = 200;
+    }
+    // Silence the duplicate HUD: centre message off (banner carries
+    // title + timer), alert off (five stars carry the heat), dialogue
+    // off (its plate would cover the truck).
+    state.missions.message = '';
+    state.missions.messageTimer = 0;
+    if (state.wantedFx) { state.wantedFx.alert = ''; state.wantedFx.alertTimer = 0; }
+    if (state.dialog) { state.dialog.active = false; state.dialog.who = null; }
   }
 
   function enterCarAt(state, x, y) {

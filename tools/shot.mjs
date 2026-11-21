@@ -12,7 +12,7 @@ const SHOTS = [
   { shot: 'start', file: 'screenshots/1-start.jpg' },
   { shot: 'drive', file: 'screenshots/2-drive.jpg' },
   { shot: 'chase', file: 'screenshots/3-chase.jpg' },
-  { shot: 'mission', file: 'screenshots/4-mission.jpg' }
+  { shot: 'hero', file: 'screenshots/4-mission.jpg' }
 ];
 
 async function getWsUrl() {
