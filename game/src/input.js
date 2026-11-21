@@ -1,70 +1,110 @@
-// Neon Bay — keyboard and mouse input, tracked per frame.
-(function () {
-  'use strict';
-  var NB = window.NeonBay;
+// Keyboard and pointer input. Held keys give a movement / driving vector; one-shot
+// presses (start, pause, enter car, punch, mute, quit) are queued as bit flags and taken
+// once by the loop, so a press between two frames is never lost and never counted twice.
+// Mouse position is tracked for aiming; a click queues a shot.
 
-  function createInput(canvas) {
-    var keys = {};
-    var pressed = {};
-    var mouse = { x: 0, y: 0, clicked: false, clickX: 0, clickY: 0 };
-    var anyKey = false;
+export const ACTION_CONFIRM = 1;
+export const ACTION_PAUSE = 2;
+export const ACTION_ENTER = 4;
+export const ACTION_PUNCH = 8;
+export const ACTION_MUTE = 16;
+export const ACTION_CONTINUE = 32;
+export const ACTION_QUIT = 64;
+export const ACTION_RADIO = 128;
+export const ACTION_GARAGE = 256;
 
-    function keyOf(e) {
-      var k = e.key ? e.key.toLowerCase() : '';
-      if (k === ' ') return 'space';
-      if (k === 'arrowup') return 'up';
-      if (k === 'arrowdown') return 'down';
-      if (k === 'arrowleft') return 'left';
-      if (k === 'arrowright') return 'right';
-      return k;
+const UP = new Set(['ArrowUp', 'KeyW']);
+const DOWN = new Set(['ArrowDown', 'KeyS']);
+const LEFT = new Set(['ArrowLeft', 'KeyA']);
+const RIGHT = new Set(['ArrowRight', 'KeyD']);
+const CONFIRM = new Set(['Space', 'Enter']);
+const PAUSE = new Set(['KeyP', 'Escape']);
+
+export function createInput(target) {
+  const held = new Set();
+  let actions = 0;
+  let shootQueued = false;
+  let weaponQueued = null;
+  let mouseX = window.innerWidth / 2;
+  let mouseY = window.innerHeight / 2;
+
+  window.addEventListener('keydown', (event) => {
+    if (UP.has(event.code) || DOWN.has(event.code) || LEFT.has(event.code) || RIGHT.has(event.code)) {
+      held.add(event.code);
+    } else if (CONFIRM.has(event.code)) {
+      if (!event.repeat) actions |= ACTION_CONFIRM;
+    } else if (PAUSE.has(event.code)) {
+      if (!event.repeat) actions |= ACTION_PAUSE;
+    } else if (event.code === 'KeyE') {
+      if (!event.repeat) actions |= ACTION_ENTER;
+    } else if (event.code === 'KeyF') {
+      if (!event.repeat) actions |= ACTION_PUNCH;
+    } else if (event.code === 'KeyM') {
+      if (!event.repeat) actions |= ACTION_MUTE;
+    } else if (event.code === 'KeyC') {
+      if (!event.repeat) actions |= ACTION_CONTINUE;
+    } else if (event.code === 'KeyQ') {
+      if (!event.repeat) actions |= ACTION_QUIT;
+    } else if (event.code === 'KeyR') {
+      if (!event.repeat) actions |= ACTION_RADIO;
+    } else if (event.code === 'KeyG') {
+      if (!event.repeat) actions |= ACTION_GARAGE;
+    } else if (event.code === 'Digit1' || event.code === 'Digit2' || event.code === 'Digit3' || event.code === 'Digit4') {
+      if (!event.repeat) weaponQueued = Number(event.code.slice(-1)); // digit 1-4
+    } else if (event.code === 'ShiftLeft' || event.code === 'ShiftRight') {
+      held.add(event.code);
+    } else {
+      return;
     }
+    event.preventDefault();
+  });
+  window.addEventListener('keyup', (event) => {
+    held.delete(event.code);
+  });
+  window.addEventListener('blur', () => held.clear());
+  target.addEventListener('pointermove', (event) => {
+    mouseX = event.clientX;
+    mouseY = event.clientY;
+  });
+  target.addEventListener('pointerdown', (event) => {
+    mouseX = event.clientX;
+    mouseY = event.clientY;
+    if (event.button === 0) shootQueued = true;
+  });
 
-    window.addEventListener('keydown', function (e) {
-      var k = keyOf(e);
-      if (['up', 'down', 'left', 'right', 'space'].indexOf(k) >= 0) e.preventDefault();
-      if (!keys[k]) pressed[k] = true;
-      keys[k] = true;
-      anyKey = true;
-    });
-    window.addEventListener('keyup', function (e) { keys[keyOf(e)] = false; });
-    window.addEventListener('blur', function () {
-      for (var k in keys) keys[k] = false;
-    });
-    canvas.addEventListener('mousemove', function (e) {
-      var r = canvas.getBoundingClientRect();
-      mouse.x = (e.clientX - r.left) * (canvas.width / r.width);
-      mouse.y = (e.clientY - r.top) * (canvas.height / r.height);
-    });
-    canvas.addEventListener('click', function (e) {
-      var r = canvas.getBoundingClientRect();
-      mouse.clickX = (e.clientX - r.left) * (canvas.width / r.width);
-      mouse.clickY = (e.clientY - r.top) * (canvas.height / r.height);
-      mouse.clicked = true;
-      anyKey = true;
-    });
-
-    return {
-      keys: keys,
-      pressed: pressed,
-      mouse: mouse,
-      isDown: function (name) { return !!keys[name]; },
-      wasPressed: function (name) { return !!pressed[name]; },
-      axis: function () {
-        var x = 0, y = 0;
-        if (keys.a || keys.left) x -= 1;
-        if (keys.d || keys.right) x += 1;
-        if (keys.w || keys.up) y -= 1;
-        if (keys.s || keys.down) y += 1;
-        return { x: x, y: y };
-      },
-      endFrame: function () {
-        for (var k in pressed) pressed[k] = false;
-        mouse.clicked = false;
-        anyKey = false;
-      },
-      consumeAnyKey: function () { var v = anyKey; anyKey = false; return v; }
-    };
-  }
-
-  NB.createInput = createInput;
-})();
+  const has = (...codes) => codes.some((c) => held.has(c));
+  return {
+    /** Movement vector for on-foot play: -1..1 on each axis. */
+    move() {
+      return {
+        x: (has('ArrowRight', 'KeyD') ? 1 : 0) - (has('ArrowLeft', 'KeyA') ? 1 : 0),
+        y: (has('ArrowDown', 'KeyS') ? 1 : 0) - (has('ArrowUp', 'KeyW') ? 1 : 0),
+        run: has('ShiftLeft', 'ShiftRight'),
+      };
+    },
+    /** Driving: gas -1..1, steer -1..1. */
+    drive() {
+      return {
+        gas: (has('ArrowUp', 'KeyW') ? 1 : 0) - (has('ArrowDown', 'KeyS') ? 1 : 0),
+        steer: (has('ArrowRight', 'KeyD') ? 1 : 0) - (has('ArrowLeft', 'KeyA') ? 1 : 0),
+        handbrake: held.has('Space'),
+      };
+    },
+    mouse() { return { x: mouseX, y: mouseY }; },
+    takeShoot() {
+      const s = shootQueued;
+      shootQueued = false;
+      return s;
+    },
+    takeWeapon() {
+      const w = weaponQueued;
+      weaponQueued = null;
+      return w;
+    },
+    takeActions() {
+      const taken = actions;
+      actions = 0;
+      return taken;
+    },
+  };
+}

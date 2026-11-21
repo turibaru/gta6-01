@@ -44,7 +44,7 @@ function main(): void {
     screenshots: { max: 4, max_bytes: 262144 },
     game_max_files: 993,
     game_max_bytes: 50331648,
-    game_path_max_bytes: 1000
+    game_path_max_bytes: 1000,
   });
   writeFileSync(join(outputDir, 'dossier.json'), dossier);
   console.log(`Neon Bay: Sunset Run — wrote ${outputDir} (dossier ${dossier.length} bytes)`);
