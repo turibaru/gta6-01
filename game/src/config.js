@@ -55,6 +55,10 @@
     pedCount: 26,
     policeMax: 5,
     wantedDecaySeconds: 18,
+    // Round 4: seconds of spawn grace at the start of every job — no
+    // damage from police contact or runners while the player finds
+    // their feet.
+    spawnGraceSeconds: 8,
     missionTimeBonus: 250,
     saveKey: 'neon-bay-sunset-run-save-v1',
     // Round 3: closer camera so the car reads bigger on screen.
@@ -169,6 +173,16 @@
       wantedOnStart: 2,
       kind: 'takedown',
       killsNeeded: 5
+    },
+    {
+      id: 'kingpin',
+      title: 'MISSION 7 — KINGPIN\'S LAST RUN',
+      brief: 'The heist money is in the truck. Run it to the boat at the Pier under a five-star storm — AIR-1 and roadblocks the whole way.',
+      target: { x: 2900, y: 200 },
+      timeLimit: 120,
+      reward: 5000,
+      wantedOnStart: 5,
+      kind: 'heist'
     }
   ];
 

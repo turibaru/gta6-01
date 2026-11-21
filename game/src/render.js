@@ -68,7 +68,7 @@
     NB.Visuals.drawDockContainers(ctx, cam, NB.Visuals.dockContainers());
   }
 
-  function drawCityProps(ctx, cam, city) {
+  function drawCityProps(ctx, cam, city, time) {
     var i, b;
     for (i = 0; i < city.buildings.length; i++) {
       b = city.buildings[i];
@@ -133,6 +133,8 @@
         ctx.fill();
       }
     }
+    // Round 4: named shop signs, pier lights, extra palms and lamps.
+    NB.Dressing.draw(ctx, cam, city, time || 0);
     // Sunset glow at the west edge (the sun setting over the bay).
     var grad = ctx.createLinearGradient(cam.x, 0, cam.x + 320, 0);
     grad.addColorStop(0, 'rgba(255, 179, 71, 0.20)');
@@ -236,6 +238,9 @@
     ctx.globalAlpha = 1;
   }
 
+  // Round 4 neon radar: the old minimap, upgraded into an open-world
+  // radar — heli blip, roadblock squares, garage marker, range rings,
+  // a rotating sweep and the district the player is standing in.
   function drawMinimap(ctx, state) {
     var mw = 188, mh = 142;
     var mx = C.canvasWidth - mw - 12, my = 12;
@@ -257,6 +262,31 @@
     for (i = 0; i < roads.ys.length; i++) {
       ctx.beginPath(); ctx.moveTo(mx, my + roads.ys[i] * sy); ctx.lineTo(mx + mw, my + roads.ys[i] * sy); ctx.stroke();
     }
+    var px = mx + state.player.x * sx, py = my + state.player.y * sy;
+    // Faint range rings around the player.
+    ctx.strokeStyle = 'rgba(255,255,255,0.14)';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(px, py, 24, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(px, py, 48, 0, Math.PI * 2); ctx.stroke();
+    // Rotating sweep, angled off the game clock.
+    var sweepA = state.time * 0.8;
+    ctx.strokeStyle = 'rgba(34,211,238,0.55)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(px, py);
+    ctx.lineTo(px + Math.cos(sweepA) * 48, py + Math.sin(sweepA) * 48);
+    ctx.stroke();
+    // Garage marker: green G at the safehouse garage.
+    ctx.fillStyle = '#2ed573';
+    ctx.font = 'bold 11px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('G', mx + C.garage.x * sx, my + C.garage.y * sy + 4);
+    // Roadblocks: orange squares.
+    ctx.fillStyle = '#ff8c42';
+    for (i = 0; i < state.roadblocks.length; i++) {
+      var b = state.roadblocks[i];
+      if (b.health > 0) ctx.fillRect(mx + b.x * sx - 3, my + b.y * sy - 3, 6, 6);
+    }
     if (state.missions.phase === 'active') {
       var t = state.missions.current().target;
       var blink = Math.sin(state.time * 5) > 0;
@@ -267,16 +297,22 @@
     for (i = 0; i < state.police.length; i++) {
       ctx.beginPath(); ctx.arc(mx + state.police[i].x * sx, my + state.police[i].y * sy, 3, 0, Math.PI * 2); ctx.fill();
     }
+    // Heli blip: white, flashing while AIR-1 is overhead.
+    if (state.heli && state.heli.active) {
+      var hBlink = Math.sin(state.time * 6) > 0;
+      ctx.fillStyle = hBlink ? '#ffffff' : 'rgba(255,255,255,0.4)';
+      ctx.beginPath(); ctx.arc(mx + state.heli.x * sx, my + state.heli.y * sy, 3.5, 0, Math.PI * 2); ctx.fill();
+    }
     ctx.fillStyle = '#ffd166';
-    ctx.beginPath(); ctx.arc(mx + state.player.x * sx, my + state.player.y * sy, 4, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(px, py, 4, 0, Math.PI * 2); ctx.fill();
     ctx.strokeStyle = '#ffffff';
     ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.arc(mx + state.player.x * sx, my + state.player.y * sy, 6, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(px, py, 6, 0, Math.PI * 2); ctx.stroke();
     ctx.restore();
     ctx.fillStyle = C.colors.hudText;
     ctx.font = 'bold 11px sans-serif';
     ctx.textAlign = 'left';
-    ctx.fillText('NEON BAY', mx, my + mh + 16);
+    ctx.fillText('NEON RADAR • ' + NB.World.districtAt(state.player.x, state.player.y).toUpperCase(), mx, my + mh + 16);
   }
 
   function drawBullets(ctx, bullets) {
@@ -297,20 +333,24 @@
   function drawWeaponWheel(ctx, state) {
     var w = state.weapons;
     var x = C.canvasWidth - 14, y = C.canvasHeight - 118;
-    ctx.textAlign = 'right';
+    ctx.textAlign = 'center';
     ctx.fillStyle = C.colors.hudBg;
     ctx.beginPath(); ctx.roundRect(x - 300, y, 300, 46, 8); ctx.fill();
     ctx.font = 'bold 12px sans-serif';
     for (var i = 0; i < NB.Weapons.length; i++) {
       var def = NB.Weapons[i];
-      var sx = x - 226 + i * 74;
+      var sx = x - 294 + i * 73;
       var active = w.current === i;
+      // Short label in the wheel only: SCATTERGUN is too wide for its
+      // 73px slot and crowds the PISTOL label; the full name still shows
+      // in the weapon-switch toast.
+      var label = def.name === 'SCATTERGUN' ? 'SCATTER' : def.name;
       ctx.fillStyle = active ? def.color : 'rgba(255,255,255,0.35)';
-      ctx.fillText((i + 1) + ' ' + def.name, sx + 34, y + 18);
+      ctx.fillText((i + 1) + ' ' + label, sx + 32, y + 18);
       var ammo = w.slots[i].ammo;
       ctx.fillStyle = '#fff3e0';
       ctx.font = '12px sans-serif';
-      ctx.fillText(ammo === Infinity ? '∞' : '' + ammo, sx + 34, y + 36);
+      ctx.fillText(ammo === Infinity ? '∞' : '' + ammo, sx + 32, y + 36);
       ctx.font = 'bold 12px sans-serif';
       if (active) {
         ctx.strokeStyle = def.color;
@@ -445,6 +485,107 @@
     drawRespectBar(ctx, state);
     drawRadioBadge(ctx, state);
     drawMinimap(ctx, state);
+    // Round 4 HUD panels.
+    NB.Beacon.drawBanner(ctx, state);
+    NB.Wanted.drawStars(ctx, state);
+    NB.Wanted.drawAlert(ctx, state);
+    drawVehicleCondition(ctx, state);
+  }
+
+  // Round 4 vehicle condition panel, parked above the weapon wheel.
+  // Only shown while the player is in a car: ENGINE / BODY percent on a
+  // bar that runs green above 60, amber from 30 to 60, red below 30.
+  function drawVehicleCondition(ctx, state) {
+    if (!state.player.inCar || !state.player.car) return;
+    var car = state.player.car;
+    var maxHp = car.maxHealth || 100;
+    var pct = Math.max(0, Math.round(car.health / maxHp * 100));
+    var x = C.canvasWidth - 314, y = C.canvasHeight - 172;
+    ctx.fillStyle = C.colors.hudBg;
+    ctx.beginPath(); ctx.roundRect(x, y, 300, 46, 8); ctx.fill();
+    ctx.fillStyle = C.colors.hudText;
+    ctx.font = 'bold 12px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText('VEHICLE CONDITION', x + 12, y + 17);
+    ctx.textAlign = 'right';
+    ctx.fillText('ENGINE / BODY  ' + pct + '%', x + 288, y + 17);
+    ctx.fillStyle = '#333';
+    ctx.fillRect(x + 12, y + 26, 276, 10);
+    ctx.fillStyle = pct > 60 ? '#2ed573' : pct >= 30 ? '#ffa502' : '#ff4757';
+    ctx.fillRect(x + 12, y + 26, 276 * pct / 100, 10);
+    ctx.textAlign = 'left';
+  }
+
+  // Word-wrap helper: lays text out in lines that fit maxW and returns
+  // the y coordinate just past the last line drawn.
+  function wrapLines(ctx, text, x, y, maxW, lineH) {
+    var words = String(text).split(' ');
+    var lines = [];
+    var cur = '';
+    for (var i = 0; i < words.length; i++) {
+      var next = cur === '' ? words[i] : cur + ' ' + words[i];
+      if (ctx.measureText(next).width > maxW && cur !== '') {
+        lines.push(cur);
+        cur = words[i];
+      } else {
+        cur = next;
+      }
+    }
+    if (cur !== '') lines.push(cur);
+    for (var j = 0; j < lines.length; j++) ctx.fillText(lines[j], x, y + j * lineH);
+    return y + lines.length * lineH;
+  }
+
+  // Round 4 mission briefing card: shown in the centre of the screen
+  // while the next job waits for ENTER. Title, the crew member handing
+  // out the job (portrait disc, name and role), their one-line quote,
+  // the objective, the reward and the start prompt — in the dialogue
+  // box style, with the crew colour as the accent.
+  function drawBriefingCard(ctx, state) {
+    var m = state.missions.current();
+    var b = NB.Briefing && NB.Briefing[m.id];
+    if (!b) return;
+    var crew = NB.Crew[b.crew] || NB.Crew.mira;
+    var bw = 560, bh = 208;
+    var bx = (C.canvasWidth - bw) / 2, by = 196;
+    ctx.fillStyle = 'rgba(12,8,24,0.92)';
+    ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 12); ctx.fill();
+    ctx.strokeStyle = crew.color;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    // Portrait disc with the crew member's initial.
+    ctx.fillStyle = crew.color;
+    ctx.beginPath(); ctx.arc(bx + 48, by + 46, 28, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#160a26';
+    ctx.font = 'bold 28px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(crew.initial, bx + 48, by + 56);
+    // Title and crew line.
+    ctx.textAlign = 'left';
+    ctx.fillStyle = C.colors.hudAccent;
+    ctx.font = 'bold 19px sans-serif';
+    ctx.fillText(m.title, bx + 88, by + 38);
+    ctx.fillStyle = crew.color;
+    ctx.font = 'bold 13px sans-serif';
+    ctx.fillText(crew.name + '  •  ' + crew.role.toUpperCase(), bx + 88, by + 60);
+    // Quote, then the objective underneath.
+    ctx.fillStyle = '#fff3e0';
+    ctx.font = 'italic 14px sans-serif';
+    var y = wrapLines(ctx, '“' + b.quote + '”', bx + 24, by + 98, bw - 48, 19);
+    ctx.fillStyle = '#cbb8e0';
+    ctx.font = '13px sans-serif';
+    wrapLines(ctx, m.brief, bx + 24, y + 12, bw - 48, 17);
+    // Reward and the start prompt.
+    ctx.fillStyle = '#2ed573';
+    ctx.font = 'bold 15px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText('REWARD  $' + m.reward, bx + 24, by + bh - 22);
+    var blink = Math.sin(state.time * 5) > 0;
+    ctx.fillStyle = blink ? '#ffd166' : '#fff3e0';
+    ctx.font = 'bold 14px sans-serif';
+    ctx.textAlign = 'right';
+    ctx.fillText('ENTER — START JOB', bx + bw - 24, by + bh - 22);
+    ctx.textAlign = 'left';
   }
 
   function drawStartScreen(ctx, state) {
@@ -491,7 +632,7 @@
     ctx.fillText('Press ENTER or click START — best haul so far: $' + state.bestCash, C.canvasWidth / 2, 548);
     ctx.fillStyle = '#22d3ee';
     ctx.font = '14px sans-serif';
-    ctx.fillText('6 jobs  •  weapon wheel (1-4, F to shoot)  •  garage (G)  •  radio (R)  •  respect ranks  •  AIR-1', C.canvasWidth / 2, 572);
+    ctx.fillText('7 jobs  •  weapon wheel (1-4, F to shoot)  •  garage (G)  •  radio (R)  •  respect ranks  •  AIR-1', C.canvasWidth / 2, 572);
     // Start button.
     state.startButton = { x: C.canvasWidth / 2 - 90, y: 380, w: 180, h: 44 };
     ctx.fillStyle = '#ff2e88';
@@ -542,6 +683,7 @@
     drawParticles: drawParticles,
     drawBullets: drawBullets,
     drawHud: drawHud,
+    drawBriefingCard: drawBriefingCard,
     drawStartScreen: drawStartScreen,
     drawGameOver: drawGameOver,
     drawPaused: drawPaused

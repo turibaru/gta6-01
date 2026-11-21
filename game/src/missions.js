@@ -3,6 +3,19 @@
   'use strict';
   var NB = window.NeonBay;
 
+  // Round 4 briefing cards: who hands out each job and the one line
+  // they say when the card is on screen. The objective line and reward
+  // come from the mission definition itself.
+  NB.Briefing = {
+    pickup: { crew: 'mira', quote: 'Rico\'s package is waiting at the pier. Bring it back before the sun does.' },
+    delivery: { crew: 'marco', quote: 'Marina Hotel, seventy-five seconds. The Strip is yours if you take it.' },
+    escape: { crew: 'mira', quote: 'Lose the tail, vanish at the arcade. The PD never looks twice at old neon.' },
+    grandprix: { crew: 'vega', quote: 'Four checkpoints, one pot. Show me what that courier hype is worth.' },
+    heist: { crew: 'mira', quote: 'The money truck sits at the Docks. Touch it and the whole city wakes up.' },
+    cleanhouse: { crew: 'marco', quote: 'Five Coral runners on our turf. Send them home and the Strip stays ours.' },
+    kingpin: { crew: 'mira', quote: 'One truck, one boat, five stars. Bring it home and you run this city.' }
+  };
+
   function createMissions() {
     var defs = NB.Missions;
     return {
@@ -34,7 +47,27 @@
         this.kills = 0;
         var m = this.current();
         this.timeLeft = m.timeLimit;
-        if (m.wantedOnStart > state.wanted) state.wanted = m.wantedOnStart;
+        if (m.wantedOnStart > state.wanted) {
+          state.wanted = m.wantedOnStart;
+          // Round 4: opening heat starts with a full decay timer so a
+          // five-star job does not cool off in the first second.
+          state.wantedTimer = NB.Config.wantedDecaySeconds;
+        }
+        // Round 4: every job opens with spawn grace — no damage from
+        // police contact or runners while the player finds their feet.
+        state.grace = NB.Config.spawnGraceSeconds;
+        // Round 4: opening heat is real — cruisers already on the scene
+        // for jobs that start at two stars or more, and a roadblock
+        // waiting when the heat starts at three stars.
+        if (state.wanted >= 2) {
+          var want = Math.min(state.wanted, NB.Config.policeMax);
+          if (state.police.length < want) {
+            NB.Entities.spawnPoliceNear(state.police, state.player, want - state.police.length);
+          }
+        }
+        if (state.wanted >= NB.Config.roadblockWanted && state.roadblocks.length === 0) {
+          NB.Heat.spawnRoadblock(state);
+        }
         if (m.kind === 'race') state.rival = NB.Rivals.createRival(state);
         if (m.kind === 'takedown') state.runners = NB.Rivals.spawnRunners(state, Math.random);
         if (state.dialog) state.dialog.showFor(m.id, 'start');

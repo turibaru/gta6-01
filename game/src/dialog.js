@@ -31,6 +31,10 @@
       cleanhouse: [
         ['mira', 'Five Coral runners on our turf. Send them home, one by one.'],
         ['marco', 'They brought bats. You brought a Scattergun. Fair trade.']
+      ],
+      kingpin: [
+        ['mira', 'Five stars on your tail and a truck full of Rico\'s money. The boat leaves at the pier.'],
+        ['marco', 'AIR-1, roadblocks, the whole department. Drive like the sunset depends on it.']
       ]
     },
     done: {
@@ -39,7 +43,8 @@
       escape: [['mira', 'Clean getaway. The PD is still circling the arcade.']],
       grandprix: [['vega', '...Fine. You\'re fast. Rematch at midnight — bring the same nerve.']],
       heist: [['mira', 'The truck is ours. Rico is already counting it. Twice.']],
-      cleanhouse: [['marco', 'Five down, turf secure. The Strip is ours again tonight.']]
+      cleanhouse: [['marco', 'Five down, turf secure. The Strip is ours again tonight.']],
+      kingpin: [['mira', 'The money is on the boat. Rico says the Strip is yours now, Kingpin.']]
     }
   };
 
@@ -84,8 +89,8 @@
         var C = NB.Config;
         var crew = NB.Crew[this.who];
         if (!crew) return;
-        var bw = 620, bh = 92;
-        var bx = (C.canvasWidth - bw) / 2, by = C.canvasHeight - 168;
+        var bw = 600, bh = 104;
+        var bx = 12, by = C.canvasHeight - 180;
         ctx.fillStyle = 'rgba(12,8,24,0.88)';
         ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 10); ctx.fill();
         ctx.strokeStyle = crew.color;
