@@ -1,61 +1,174 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="id">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Neon Bay: Sunset Run — an open-world sunset crime game</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NEON BAY: SUNSET RUN — 3D</title>
 <style>
-  html, body { margin: 0; padding: 0; background: #160a26; height: 100%; }
-  body {
-    display: flex; flex-direction: column; align-items: center; justify-content: center;
-    font-family: sans-serif; color: #fff3e0;
-  }
-  h1 { font-size: 20px; margin: 10px 0 4px 0; letter-spacing: 1px; }
-  h1 span { color: #ff2e88; }
-  p.sub { font-size: 13px; color: #cbb8e0; margin: 0 0 10px 0; text-align: center; }
-  #wrap { position: relative; }
-  canvas {
-    display: block; width: 960px; height: 600px; max-width: 96vw;
-    background: #1a0f2e; border: 3px solid #ff2e88; border-radius: 10px;
-    box-shadow: 0 0 42px rgba(255, 46, 136, 0.45);
-  }
-  #loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #ffd166; font-size: 14px; }
-  footer { font-size: 12px; color: #9d8bb5; margin-top: 10px; text-align: center; }
-  footer b { color: #ffd166; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #1a0f2e;
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; color: #fff; }
+  #game-canvas { position: fixed; inset: 0; z-index: 0; }
+  #game-canvas canvas { display: block; }
+
+  .hud { position: fixed; z-index: 10; pointer-events: none;
+    text-shadow: 0 1px 3px rgba(0,0,0,.9); }
+  .panel { background: rgba(10, 8, 24, 0.62); border: 1px solid rgba(255, 45, 149, 0.45);
+    border-radius: 10px; padding: 8px 12px; backdrop-filter: blur(2px); }
+
+  /* Kiri atas: uang, skor, job, wanted */
+  #hud-top-left { top: 14px; left: 14px; display: flex; flex-direction: column; gap: 6px; }
+  #hud-money { font-size: 30px; font-weight: 800; color: #7cff6b; letter-spacing: 1px; }
+  #hud-score { font-size: 15px; font-weight: 700; color: #ffe14d; }
+  #hud-jobs { font-size: 14px; color: #bfe9ff; }
+  #hud-wanted { font-size: 22px; letter-spacing: 3px; color: #ffd23e; }
+  #hud-wanted .star-on { color: #ffd23e; }
+  #hud-wanted .star-off { color: rgba(255,255,255,.25); }
+
+  /* Kanan atas: minimap + status */
+  #hud-top-right { top: 14px; right: 14px; display: flex; flex-direction: column;
+    gap: 6px; align-items: flex-end; }
+  #hud-minimap { width: 180px; height: 180px; border: 2px solid rgba(0,229,255,.6);
+    border-radius: 10px; background: #10131c; box-shadow: 0 0 18px rgba(0,229,255,.35); }
+  #hud-radio { font-size: 13px; color: #ff9ecf; font-weight: 700; }
+  #hud-weapon { font-size: 14px; color: #fff; font-weight: 700; }
+  #hud-condition { font-size: 13px; color: #7cff6b; }
+  #hud-respect { font-size: 13px; color: #c9a86a; font-weight: 700; }
+
+  /* Kiri bawah: misi — max-width 320 supaya tidak tertutup panel dialog
+     tengah-bawah (560px, terpusat) di viewport 1280. */
+  #hud-mission-box { left: 14px; bottom: 14px; max-width: 320px; }
+  #hud-mission { font-size: 19px; font-weight: 800; color: #ffe14d; }
+  #hud-mission-sub { font-size: 14px; color: #e8e8ff; margin-top: 2px; line-height: 1.35; }
+
+  /* Tengah bawah: dialog */
+  #hud-dialog { left: 50%; bottom: 16px; transform: translateX(-50%);
+    width: min(560px, 72vw); display: none; }
+  #hud-dialog-name { font-size: 15px; font-weight: 800; color: #ff2d95; margin-bottom: 2px; }
+  #hud-dialog-text { font-size: 15px; line-height: 1.4; color: #fff; }
+
+  /* Kanan bawah: kecepatan */
+  #hud-speed-box { right: 14px; bottom: 14px; text-align: right; }
+  #hud-speed { font-size: 34px; font-weight: 800; color: #fff; }
+  #hud-speed small { font-size: 14px; color: #bfe9ff; }
+
+  /* Toast tengah atas */
+  #hud-toast { top: 16px; left: 50%; transform: translateX(-50%);
+    font-size: 17px; font-weight: 700; color: #fff; background: rgba(10,8,24,.72);
+    border: 1px solid rgba(0,229,255,.5); border-radius: 8px; padding: 8px 18px;
+    display: none; white-space: nowrap; }
+
+  /* Layar-layar */
+  .screen { position: fixed; inset: 0; z-index: 20; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; text-align: center;
+    background: linear-gradient(180deg, rgba(26,8,46,.82) 0%, rgba(60,12,60,.78) 55%, rgba(255,110,60,.55) 100%); }
+  .screen.hidden { display: none; }
+  .screen h1 { font-size: 56px; font-weight: 900; letter-spacing: 3px; line-height: 1.05;
+    color: #fff; text-shadow: 0 0 24px #ff2d95, 0 4px 0 #7a1046; }
+  .screen h1 .neon { color: #00e5ff; text-shadow: 0 0 24px #00e5ff, 0 4px 0 #0a5a6b; }
+  .screen h2 { font-size: 20px; font-weight: 700; color: #ffe14d; letter-spacing: 6px; margin-top: 6px; }
+  .screen p { font-size: 16px; color: #e8e8ff; max-width: 560px; line-height: 1.55; margin-top: 14px; }
+  .screen .keys { font-size: 14px; color: #bfe9ff; margin-top: 18px; line-height: 1.9; }
+  .screen .keys b { color: #fff; background: rgba(255,255,255,.14);
+    border: 1px solid rgba(255,255,255,.35); border-radius: 5px; padding: 1px 8px; }
+  .screen .cta { margin-top: 24px; font-size: 19px; font-weight: 800; color: #111;
+    background: linear-gradient(90deg, #ff2d95, #ff9a1f); border-radius: 10px;
+    padding: 12px 34px; cursor: pointer; pointer-events: auto;
+    box-shadow: 0 0 26px rgba(255,45,149,.7); }
+  .screen .sub { margin-top: 14px; font-size: 13px; color: rgba(255,255,255,.65); }
+
+  #wasted-screen h1 { color: #ff2020; text-shadow: 0 0 30px #ff2020, 0 4px 0 #5a0000; }
+  #garage-panel { background: rgba(8, 6, 20, 0.92); }
+  #garage-panel .garage-list { display: flex; gap: 14px; margin-top: 18px; }
+  #garage-panel .garage-car { border: 2px solid rgba(0,229,255,.5); border-radius: 10px;
+    padding: 14px 20px; font-size: 15px; font-weight: 700; color: #fff;
+    pointer-events: auto; cursor: pointer; background: rgba(0,229,255,.08); }
+  #garage-panel .garage-car:hover { background: rgba(255,45,149,.25); }
 </style>
 </head>
 <body>
-<h1>NEON BAY <span>• SUNSET RUN</span></h1>
-<p class="sub">An original open-world sunset crime game. Explore Neon Bay on foot and by car, steal cars, outrun the Bay PD, and run Rico&rsquo;s jobs.</p>
-<div id="wrap">
-  <canvas id="game" width="960" height="600"></canvas>
-  <div id="loading">Loading Neon Bay&hellip;</div>
-</div>
-<footer><b>WASD / arrows</b> drive &amp; walk &nbsp;•&nbsp; <b>E</b> enter / steal car &nbsp;•&nbsp; <b>SPACE</b> brake &nbsp;•&nbsp; <b>ENTER</b> start job &nbsp;•&nbsp; <b>1-4</b> weapons &nbsp;•&nbsp; <b>F</b> shoot / click to fire &nbsp;•&nbsp; <b>G</b> garage &nbsp;•&nbsp; <b>R</b> radio &nbsp;•&nbsp; <b>P</b> pause &nbsp;•&nbsp; <b>M</b> mute &nbsp;•&nbsp; Progress saves in your browser.</footer>
-<script src="src/config.js"></script>
-<script src="src/world.js"></script>
-<script src="src/input.js"></script>
-<script src="src/audio.js"></script>
-<script src="src/entities.js"></script>
-<script src="src/missions.js"></script>
-<script src="src/weapons.js"></script>
-<script src="src/heat.js"></script>
-<script src="src/respect.js"></script>
-<script src="src/garage.js"></script>
-<script src="src/radio.js"></script>
-<script src="src/dialog.js"></script>
-<script src="src/rivals.js"></script>
-<script src="src/beacon.js"></script>
-<script src="src/wanted.js"></script>
-<script src="src/dressing.js"></script>
-<script src="src/visuals.js"></script>
-<script src="src/render.js"></script>
-<script src="src/shots.js"></script>
-<script src="src/main.js"></script>
-<script>
-  // Boot the game once every script above has loaded. No network requests:
-  // every file the page loads lives under game/.
-  window.NeonBay.boot();
-</script>
+  <div id="game-canvas"></div>
+
+  <!-- HUD kiri atas -->
+  <div class="hud" id="hud-top-left">
+    <div id="hud-money">$0</div>
+    <div id="hud-score">SKOR 0</div>
+    <div id="hud-jobs">JOB 0/7 SELESAI</div>
+    <div id="hud-wanted"><span class="star-off">&#9733;&#9733;&#9733;&#9733;&#9733;</span></div>
+  </div>
+
+  <!-- HUD kanan atas -->
+  <div class="hud" id="hud-top-right">
+    <canvas id="hud-minimap" width="180" height="180"></canvas>
+    <div id="hud-radio" class="panel">&#9834; NEON FM 88.4</div>
+    <div id="hud-weapon" class="panel">TINJU</div>
+    <div id="hud-condition" class="panel">KONDISI 100%</div>
+    <div id="hud-respect" class="panel">RESPECT 0</div>
+  </div>
+
+  <!-- HUD kiri bawah: misi -->
+  <div class="hud panel" id="hud-mission-box">
+    <div id="hud-mission">NEON BAY</div>
+    <div id="hud-mission-sub">Ikuti penanda cyan di minimap. Temui Mira di Neon Strip.</div>
+  </div>
+
+  <!-- HUD tengah bawah: dialog -->
+  <div class="hud panel" id="hud-dialog">
+    <div id="hud-dialog-name">MIRA</div>
+    <div id="hud-dialog-text">...</div>
+  </div>
+
+  <!-- HUD kanan bawah: kecepatan -->
+  <div class="hud" id="hud-speed-box">
+    <div id="hud-speed">0 <small>km/j</small></div>
+  </div>
+
+  <!-- Toast -->
+  <div class="hud" id="hud-toast"></div>
+
+  <!-- Layar judul -->
+  <div class="screen" id="title-screen">
+    <h1>NEON <span class="neon">BAY</span></h1>
+    <h2>SUNSET RUN &mdash; 3D</h2>
+    <p>Kota pantai fiktif Neon Bay di jam emas. Bantu Mira &amp; Rico menyelesaikan
+      7 job kru, kabur dari NBPD, dan kuasai Neon Strip sebelum matahari tenggelam.</p>
+    <div class="keys">
+      <b>W A S D</b> gerak / nyetir &nbsp; <b>SHIFT</b> lari / ngebut &nbsp; <b>E</b> masuk / keluar mobil<br>
+      <b>SPASI</b> rem tangan &nbsp; <b>F</b> tembak &nbsp; <b>1-3</b> ganti senjata &nbsp; <b>R</b> ganti radio<br>
+      <b>G</b> garasi &nbsp; <b>P</b> / <b>ESC</b> jeda &nbsp; <b>M</b> mute
+    </div>
+    <div class="cta" id="title-start">KLIK UNTUK MULAI</div>
+    <div class="sub">Kota orisinal &mdash; bukan GTA. Semua karakter &amp; tempat fiktif.</div>
+  </div>
+
+  <!-- Layar jeda -->
+  <div class="screen hidden" id="pause-screen">
+    <h1>JEDA</h1>
+    <p>Neon Bay menunggumu. Matahari belum tenggelam.</p>
+    <div class="cta" id="pause-resume">LANJUTKAN</div>
+    <div class="sub">Tekan P / ESC untuk melanjutkan</div>
+  </div>
+
+  <!-- Layar wasted -->
+  <div class="screen hidden" id="wasted-screen">
+    <h1>WASTED</h1>
+    <p>NBPD menangkapmu di Neon Bay. Kru akan menjemputmu &mdash; tapi job hari ini hangus.</p>
+    <div class="cta" id="wasted-retry">COBA LAGI</div>
+  </div>
+
+  <!-- Panel garasi -->
+  <div class="screen hidden" id="garage-panel">
+    <h1>GARASI <span class="neon">RICO</span></h1>
+    <p>Pilih tungganganmu. Cat oranye = mobil kru.</p>
+    <div class="garage-list">
+      <div class="garage-car" data-car="sedan">SEDAN<br><span style="color:#bfe9ff;font-size:13px">Seimbang</span></div>
+      <div class="garage-car" data-car="sport">SPORT<br><span style="color:#bfe9ff;font-size:13px">Paling cepat</span></div>
+      <div class="garage-car" data-car="truck">TRUK<br><span style="color:#bfe9ff;font-size:13px">Paling kuat</span></div>
+    </div>
+    <div class="cta" id="garage-close">TUTUP [G]</div>
+  </div>
+
+  <script src="./vendor/three.min.js"></script>
+  <script type="module" src="./src/main.js"></script>
 </body>
 </html>

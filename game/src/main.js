@@ -1,761 +1,577 @@
-// Neon Bay: Sunset Run — game loop, player control, collisions, wanted
-// level, save data and the screenshot scene presets.
-(function () {
-  'use strict';
-  var NB = window.NeonBay;
-  var C = NB.Config;
+// main.js — boot, game loop, state machine NEON BAY 3D.
+// title / play / pause / wasted / busted. Memanggil Render + World +
+// semua sistem tiap frame, lalu Render.syncEntities.
+// HUD = overlay DOM + minimap canvas 2D top-down dari state X/Z yang sama.
+// Save: localStorage key neonbay-save-v1.
 
-  function loadSave() {
-    try {
-      var raw = localStorage.getItem(C.saveKey);
-      if (!raw) return { bestCash: 0, bestScore: 0, jobs: 0 };
-      var d = JSON.parse(raw);
-      return { bestCash: d.bestCash || 0, bestScore: d.bestScore || 0, jobs: d.jobs || 0 };
-    } catch (e) { return { bestCash: 0, bestScore: 0, jobs: 0 }; }
+import { Render } from './render.js';
+import { World } from './world.js';
+import { CONFIG, clamp, dist2d } from './config.js';
+import { Input } from './input.js';
+import { Entities } from './entities.js';
+import { Missions } from './missions.js';
+import { Heat } from './heat.js';
+import { Weapons } from './weapons.js';
+import { Garage } from './garage.js';
+import { Respect } from './respect.js';
+import { Radio } from './radio.js';
+import { Dialog, NBPD_BARKS, MIRA_BARKS, RICO_BARKS } from './dialog.js';
+import { AudioSys } from './audio.js';
+import { applyShotPreset, shotFromUrl } from './shots.js';
+import { Wanted } from './wanted.js';
+import { Rivals } from './rivals.js';
+
+function el(id) { return document.getElementById(id); }
+function show(id, on) { const n = el(id); if (n) n.style.display = on ? 'block' : 'none'; }
+
+export class Game {
+  constructor() {
+    this.state = { money: CONFIG.startMoney, score: 0, jobsDone: 0 };
+    this.stateName = 'title';
+    this.time = 0;
+    this.frozen = false;   // screenshot mode: render saja, tanpa update
+    this.shotMode = null;
+    this.beacon = { x: 0, z: 0, visible: false };
+    this.muted = false;
+    this._toastTimer = 0;
+    this._barkTimer = 25;
+    this._speedingTimer = 0;
+    this._pedHitTimer = 0;
+    this._lastFrame = 0;
+    this._raf = 0;
+
+    this.audio = new AudioSys();
+    this.input = new Input();
+    this.heat = new Heat();
+    this.wanted = new Wanted(this.heat);
+    this.respect = new Respect(0);
+    this.weapons = new Weapons();
+    this.garage = new Garage();
+    this.radio = new Radio(this.audio);
+    this.dialog = new Dialog();
+    this.rivals = new Rivals();
+    this.entities = null;
+    this.missions = null;
+    this._garageWired = false;
   }
 
-  function saveGame(state) {
+  // ---------- save / load ----------
+  save() {
     try {
-      localStorage.setItem(C.saveKey, JSON.stringify({
-        bestCash: state.bestCash,
-        bestScore: state.bestScore,
-        jobs: state.missions.completed
+      localStorage.setItem(CONFIG.saveKey, JSON.stringify({
+        money: this.state.money,
+        jobsDone: this.missions ? this.missions.completed : 0,
+        respect: this.respect.points,
+        score: this.state.score,
+        engineLevel: this.garage.engineLevel,
+        paintColor: this.garage.paintColor,
       }));
-    } catch (e) { /* storage is best-effort */ }
+    } catch (err) {}
   }
 
-  function dist2(a, b) {
-    var dx = a.x - b.x, dy = a.y - b.y;
-    return dx * dx + dy * dy;
+  load() {
+    try {
+      const raw = localStorage.getItem(CONFIG.saveKey);
+      if (!raw) return;
+      const s = JSON.parse(raw);
+      if (typeof s.money === 'number') this.state.money = s.money;
+      if (typeof s.respect === 'number') this.respect.points = s.respect;
+      if (typeof s.score === 'number') this.state.score = s.score;
+      if (typeof s.engineLevel === 'number') this.garage.engineLevel = s.engineLevel;
+      if (typeof s.paintColor === 'string') this.garage.paintColor = s.paintColor;
+      if (typeof s.jobsDone === 'number' && this.missions) this.missions.completed = s.jobsDone;
+    } catch (err) {}
   }
 
-  function nearestCar(state, maxDist) {
-    var best = null, bestD = maxDist * maxDist;
-    var cars = state.traffic.concat(state.parked);
-    for (var i = 0; i < cars.length; i++) {
-      var d = dist2(state.player, cars[i]);
-      if (d < bestD) { bestD = d; best = cars[i]; }
+  // ---------- boot ----------
+  boot() {
+    this.input.attach();
+    // Render.init SUDAH memanggil World.build(scene) di dalamnya:
+    // memanggil World.build lagi di sini akan menggandakan seluruh kota
+    // (gedung, collider, jalan) di scene yang sama. Jadi jangan rebuild.
+    try { Render.init('game-canvas'); } catch (err) { console.warn('Render.init gagal', err); }
+    this.entities = new Entities(World);
+    this.missions = new Missions({
+      state: this.state, dialog: this.dialog, audio: this.audio,
+      heat: this.heat, respect: this.respect, rivals: this.rivals,
+    });
+    this.load();
+    if (this.garage.paintColor) this.entities.playerCar.color = this.garage.paintColor;
+    this._wireGaragePanel();
+    this._wireScreenButtons();
+    this._showOnly('title-screen');
+    this._lastFrame = performance.now();
+    const shot = shotFromUrl();
+    if (shot) {
+      applyShotPreset(shot, this);
+      this._showOnly(null);
     }
+    const loop = (now) => {
+      this._raf = requestAnimationFrame(loop);
+      const dt = clamp((now - this._lastFrame) / 1000, 0, 0.05);
+      this._lastFrame = now;
+      this._frame(dt);
+    };
+    this._raf = requestAnimationFrame(loop);
+  }
+
+  _showOnly(id) {
+    for (const s of ['title-screen', 'pause-screen', 'wasted-screen', 'garage-panel']) show(s, s === id);
+  }
+
+  toast(msg, seconds = 3) {
+    const n = el('hud-toast');
+    if (!n) return;
+    n.textContent = msg;
+    n.style.display = 'block';
+    this._toastTimer = seconds;
+  }
+
+  // ---------- input global ----------
+  _globalKeys() {
+    const inp = this.input;
+    if (inp.wasPressed('KeyM')) {
+      this.muted = !this.muted;
+      this.audio.setMuted(this.muted);
+      this.toast(this.muted ? 'Suara dimatikan (M)' : 'Suara dinyalakan (M)');
+    }
+    if (inp.wasPressed('KeyR') && this.stateName === 'play') {
+      const st = this.radio.next();
+      this.toast(`Radio: ${st.name} — ${st.desc}`);
+      this.audio.uiClick();
+    }
+    // (Toggle jeda KeyP ditangani di _frame, SEKALI per frame — bukan di sini,
+    // supaya tidak langsung jeda-lalu-lanjut dalam frame yang sama.)
+  }
+
+  // ---------- frame ----------
+  _frame(dt) {
+    const inp = this.input;
+    this._globalKeys();
+    // Toggle jeda SEKALI per frame (dulu KeyP dibaca _globalKeys DAN cabang
+    // pause dalam frame yang sama sehingga P langsung jeda-lalu-lanjut).
+    if (inp.wasPressed('KeyP') && (this.stateName === 'play' || this.stateName === 'pause')) {
+      if (this.stateName === 'play') { this.stateName = 'pause'; this._showOnly('pause-screen'); }
+      else { this.stateName = 'play'; this._showOnly(null); }
+    }
+    if (this.stateName === 'title') {
+      if (inp.wasPressed('Enter')) {
+        this.audio.ensure();
+        this.stateName = 'play';
+        this._showOnly(null);
+        this.dialog.show('Mira', 'Selamat datang di Neon Bay. Pergi ke marker garage — tekan ENTER untuk job pertama.', 7);
+        this.radio.setPlaying(true);
+      }
+      this._renderOnly(dt);
+      inp.endFrame();
+      return;
+    }
+    if (this.stateName === 'pause') {
+      if (inp.wasPressed('Enter') || inp.wasPressed('Escape')) { this.stateName = 'play'; this._showOnly(null); }
+      this._renderOnly(dt);
+      inp.endFrame();
+      return;
+    }
+    if (this.stateName === 'wasted' || this.stateName === 'busted') {
+      if (inp.wasPressed('Enter')) {
+        this.stateName = 'play';
+        this._showOnly(null);
+      }
+      this._renderOnly(dt);
+      inp.endFrame();
+      return;
+    }
+    if (this.frozen) { this._renderOnly(dt); inp.endFrame(); return; }
+
+    this.time += dt;
+    this._update(dt);
+    this._renderOnly(dt);
+    inp.endFrame();
+  }
+
+  _update(dt) {
+    const inp = this.input;
+    const e = this.entities;
+    const p = e.player;
+
+    // Garage panel terbuka: tangani tombol panel, game dijeda.
+    if (this.garage.open) {
+      if (inp.wasPressed('Digit1')) this._garageAction('engine');
+      if (inp.wasPressed('Digit2')) this._garageAction('repair');
+      if (inp.wasPressed('Digit3')) this._garageAction('paint');
+      if (inp.wasPressed('KeyG', 'Escape')) this._closeGarage();
+      return;
+    }
+
+    // Senjata 1-4.
+    if (inp.wasPressed('Digit1')) this.weapons.selectByNumber(1);
+    if (inp.wasPressed('Digit2')) this.weapons.selectByNumber(2);
+    if (inp.wasPressed('Digit3')) this.weapons.selectByNumber(3);
+    if (inp.wasPressed('Digit4')) this.weapons.selectByNumber(4);
+    this.weapons.update(dt);
+
+    // E masuk / keluar mobil.
+    if (inp.wasPressed('KeyE')) {
+      if (p.inCar) { e.exitCar(); this.audio.uiClick(); }
+      else {
+        const res = e.enterCar();
+        if (res.ok) {
+          this.audio.uiClick();
+          if (res.stolen) {
+            this.heat.add(CONFIG.heatStealCar);
+            this.toast('Mobil dicuri! NBPD memperhatikanmu.');
+          }
+        } else this.toast('Tidak ada mobil di dekatmu.');
+      }
+    }
+
+    // G garage dekat marker.
+    if (inp.wasPressed('KeyG')) {
+      const g = e.spawns.garage;
+      if (dist2d(p.x, p.z, g.x, g.z) < 10) this._openGarage();
+      else this.toast('Garage Mira ada di marker kuning — dekati dulu.');
+    }
+
+    // ENTER: mulai misi di marker garage.
+    if (inp.wasPressed('Enter')) {
+      if (!this.missions.active) {
+        const g = e.spawns.garage;
+        if (dist2d(p.x, p.z, g.x, g.z) < 10) {
+          const res = this.missions.begin(e.spawns);
+          if (res.ok) this.toast(`${res.def.name} dimulai!`);
+        } else {
+          this.toast('Pergi ke marker garage (ENTER) untuk mulai job.');
+        }
+      }
+    }
+
+    // Tembak: F atau klik mouse.
+    if (inp.wasPressed('KeyF') || inp.mouseClicked || (inp.mouseDown && this.weapons.def().auto)) {
+      this._shoot();
+    }
+
+    // Wanted / heat.
+    const hidden = dist2d(p.x, p.z, e.spawns.hideout.x, e.spawns.hideout.z) < 12;
+    this.heat.update(dt, hidden, e.nearestCopDist());
+    const w = this.wanted.update(dt, p, e.nearestCopDist());
+    e.spawnPolice(w.desiredPolice);
+    if (w.stars > 0) this.audio.startSiren(); else this.audio.stopSiren();
+    if (w.busted) return this._busted();
+
+    // Entitas + rival + misi.
+    e.update(dt, inp, {
+      audio: this.audio, garage: this.garage, wantedStars: w.stars,
+      heliActive: w.heliActive, roadblockActive: w.roadblockActive,
+      onPedHit: () => this._onPedHit(),
+      onSpeeding: () => this._onSpeeding(dt),
+      onCarWrecked: () => this._onCarWrecked(),
+    });
+    this.rivals.update(dt, p, (dmg) => { this._damagePlayer(dmg); });
+    this._raceCheck();
+    this.missions.update(dt, p, e.spawns, { wantedStars: w.stars });
+    this.state.jobsDone = this.missions.completed;
+
+    // HP / wasted.
+    if (p.hp <= 0) return this._wasted();
+    if (p.inCar && e.playerCar && e.playerCar.condition <= 0) this._onCarWrecked();
+
+    // Dialog & radio & barks.
+    this.dialog.update(dt);
+    this.radio.update(dt);
+    this._barks(dt, w.stars);
+    if (this._toastTimer > 0) {
+      this._toastTimer -= dt;
+      if (this._toastTimer <= 0) { const n = el('hud-toast'); if (n) n.style.display = 'none'; }
+    }
+    this.save();
+  }
+
+  _raceCheck() {
+    const r = this.rivals;
+    if (r.mode !== 'race' || !r.checkpoints) return;
+    const p = this.entities.player;
+    const cp = r.checkpoints[r.playerCheckpoint % r.checkpoints.length];
+    if (cp && dist2d(p.x, p.z, cp.x, cp.z) < 8) r.playerPassedCheckpoint();
+  }
+
+  _barks(dt, stars) {
+    this._barkTimer -= dt;
+    if (this._barkTimer > 0) return;
+    this._barkTimer = 30 + Math.random() * 20;
+    if (stars >= 2) this.dialog.bark(NBPD_BARKS[Math.floor(Math.random() * NBPD_BARKS.length)], 'NBPD');
+    else if (Math.random() < 0.5) this.dialog.bark(MIRA_BARKS[Math.floor(Math.random() * MIRA_BARKS.length)], 'Mira');
+    else this.dialog.bark(RICO_BARKS[Math.floor(Math.random() * RICO_BARKS.length)], 'Rico');
+  }
+
+  _onPedHit() {
+    this._pedHitTimer -= 1;
+    this.heat.add(CONFIG.heatHitPed);
+    this.audio.crash(0.7);
+    this.toast('Kamu menabrak pejalan kaki! Wanted naik.');
+  }
+
+  _onSpeeding(dt) {
+    this._speedingTimer -= dt;
+    if (this._speedingTimer <= 0) {
+      this._speedingTimer = 2;
+      this.heat.add(CONFIG.heatSpeedingNearCop);
+    }
+  }
+
+  _onCarWrecked() {
+    const e = this.entities;
+    if (!e.player.inCar) return;
+    e.exitCar();
+    this._damagePlayer(15);
+    this.audio.explosion();
+    this.toast('Mobilmu rusak total! Kamu terlempar keluar.');
+  }
+
+  _damagePlayer(dmg) {
+    this.entities.damagePlayer(dmg);
+    if (this.entities.player.hp <= 0) this._wasted();
+  }
+
+  _wasted() {
+    const fine = Math.min(this.state.money, CONFIG.wastedFine);
+    this.state.money -= fine;
+    this.entities.respawnPlayerAt(this.entities.spawns.player.x, this.entities.spawns.player.z);
+    this.heat.clear();
+    this.wanted.reset();
+    this.entities.clearPolice();
+    this.audio.wasted();
+    this.audio.stopSiren();
+    this.stateName = 'wasted';
+    this._showOnly('wasted-screen');
+    this.toast(`WASTED — denda $${fine}. Bangun di rumah sakit.`);
+    this.save();
+  }
+
+  _busted() {
+    const fine = Math.min(this.state.money, CONFIG.bustedFine);
+    this.state.money -= fine;
+    this.entities.respawnPlayerAt(this.entities.spawns.garage.x, this.entities.spawns.garage.z);
+    this.heat.clear();
+    this.wanted.reset();
+    this.entities.clearPolice();
+    this.audio.wasted();
+    this.audio.stopSiren();
+    this.stateName = 'busted';
+    this._showOnly('wasted-screen');
+    this.toast(`BUSTED — denda $${fine}. Dibebaskan di kantor polisi.`);
+    this.save();
+  }
+
+  // ---------- tembak (hitscan ke arah heading pemain) ----------
+  _shoot() {
+    const w = this.weapons;
+    const shot = w.fire(this.time);
+    if (!shot) return;
+    if (shot.empty) { this.audio.emptyClick(); this.toast('Ammo habis! Isi ulang di garage (G).'); return; }
+    const e = this.entities;
+    const p = e.player;
+    this.audio.shoot(shot.kind);
+    try { Render.flashMuzzle(p.x, p.z, p.heading); } catch (err) {}
+    if (shot.melee) {
+      // Fists: pukul target terdekat di depan.
+      const target = this._nearestTargetInCone(p, shot.range, 0.9);
+      if (target) this._hitTarget(target, shot.damage);
+      return;
+    }
+    this.heat.add(CONFIG.heatShoot);
+    for (let i = 0; i < shot.pellets; i++) {
+      const target = this._nearestTargetInCone(p, shot.range, 0.6 + shot.spread * 4);
+      if (target) this._hitTarget(target, shot.damage);
+    }
+  }
+
+  _nearestTargetInCone(p, range, coneCos) {
+    let best = null, bd = range;
+    const fx = Math.sin(p.heading), fz = Math.cos(p.heading);
+    const consider = (obj, kind) => {
+      const dx = obj.x - p.x, dz = obj.z - p.z;
+      const d = Math.hypot(dx, dz);
+      if (d > range || d < 0.5) return;
+      const dot = (dx * fx + dz * fz) / d;
+      if (dot < coneCos) return;
+      if (d < bd) { bd = d; best = { obj, kind }; }
+    };
+    for (const r of this.rivals.list) if (r.hp > 0) consider(r, 'rival');
+    for (const c of this.entities.police) consider(c, 'police');
+    for (const ped of this.entities.peds) consider(ped, 'ped');
     return best;
   }
 
-  function createState(canvas) {
-    var rand = NB.World.mulberry((Math.random() * 1e9) | 0);
-    var city = NB.World.buildCity();
-    var save = loadSave();
-    var parked = [];
-    for (var i = 0; i < 8; i++) {
-      var s = NB.World.randomRoadSpawn(rand);
-      var car = NB.Entities.makeCar(s.x, s.y, s.angle, NB.CarPaints[(i + 3) % NB.CarPaints.length], 'parked');
-      car.speed = 0;
-      parked.push(car);
-    }
-    var player = {
-      x: 500, y: 1250, angle: -Math.PI / 2,
-      speed: 0, health: C.player.health,
-      inCar: false, car: null,
-      walkPhase: 0
-    };
-    var state = {
-      canvas: canvas,
-      ctx: canvas.getContext('2d'),
-      city: city,
-      input: NB.createInput(canvas),
-      audio: NB.createAudio(),
-      missions: NB.createMissions(),
-      particles: NB.Entities.makeParticles(),
-      traffic: NB.Entities.spawnTraffic(rand),
-      peds: NB.Entities.spawnPeds(rand),
-      parked: parked,
-      police: [],
-      // Round 3 systems.
-      bullets: [],
-      roadblocks: [],
-      heli: NB.Heat.createHeli(),
-      weapons: NB.WeaponsRuntime.createWeapons(),
-      respect: NB.Respect.createRespect(),
-      garage: NB.Garage.createGarage(),
-      radio: NB.Radio.createRadio(),
-      dialog: NB.Dialog.createDialog(),
-      // Round 4 systems.
-      beacon: NB.Beacon.createBeacon(),
-      wantedFx: NB.Wanted.createWantedFx(),
-      rival: null,
-      runners: [],
-      viewW: C.canvasWidth / C.zoom,
-      viewH: C.canvasHeight / C.zoom,
-      player: player,
-      cam: { x: 0, y: 0 },
-      screen: 'start', // start | play | paused | over
-      busted: false,
-      wanted: 0,
-      wantedTimer: 0,
-      grace: 0,
-      calmTimer: 0,
-      score: 0,
-      speedKmh: 0,
-      time: 0,
-      bestCash: save.bestCash,
-      bestScore: save.bestScore,
-      startButton: null,
-      shot: null,
-      // Round 4 hero frame: true only while the ?shot=hero preset is
-      // staged, so the render path can drop its duplicate target marker.
-      heroFrame: false
-    };
-    state.missions.showMessage('Welcome to Neon Bay. Press ENTER to start.', 999);
-    return state;
-  }
-
-  function enterCar(state) {
-    var car = nearestCar(state, 70);
-    if (!car) return;
-    var wasParked = car.kind === 'parked';
-    var p = state.player;
-    p.inCar = true;
-    p.car = car;
-    p.x = car.x; p.y = car.y; p.angle = car.angle;
-    car.kind = 'player';
-    state.audio.click();
-    state.particles.burst(car.x, car.y, '#22d3ee', 10, 120);
-    // Round 3: boosting a ride earns street respect.
-    if (wasParked) state.respect.add(state, 10, 'Car stolen');
-    // Taking a parked car in sight of the law draws heat.
-    if (wasParked && state.police.length === 0 && Math.random() < 0.4) {
-      raiseWanted(state, 1, 'Car stolen in broad daylight!');
+  _hitTarget(target, dmg) {
+    if (target.kind === 'rival') {
+      const died = this.rivals.damage(target.obj.id, dmg);
+      if (died) {
+        this.state.score += 150;
+        this.toast('Rival tumbang! +150 poin.');
+        this.audio.pickup();
+      }
+    } else if (target.kind === 'police') {
+      this.entities.damagePlayer(0);
+      this.heat.add(8);
+      this.state.score += 50;
+    } else if (target.kind === 'ped') {
+      this.heat.add(CONFIG.heatHitPed);
+      this.toast('Jangan tembak warga sipil! Wanted naik.');
     }
   }
 
-  function exitCar(state) {
-    var p = state.player;
-    if (!p.inCar || !p.car) return;
-    var car = p.car;
-    car.speed = 0;
-    p.inCar = false;
-    p.x = car.x + Math.cos(car.angle + Math.PI / 2) * 40;
-    p.y = car.y + Math.sin(car.angle + Math.PI / 2) * 40;
-    p.car = null;
-    state.audio.click();
-  }
-
-  function raiseWanted(state, n, reason) {
-    var before = state.wanted;
-    state.wanted = Math.min(5, state.wanted + n);
-    state.wantedTimer = C.wantedDecaySeconds;
-    if (state.wanted > before) {
-      state.missions.showMessage(reason + '  (Wanted ' + state.wanted + '★)', 3);
-      var need = Math.min(state.wanted, C.policeMax) - state.police.length;
-      if (need > 0) NB.Entities.spawnPoliceNear(state.police, state.player, need);
-      // Round 3: at three stars the NBPD starts dropping roadblocks.
-      if (state.wanted >= C.roadblockWanted && before < C.roadblockWanted) {
-        NB.Heat.spawnRoadblock(state);
-      }
+  // Tombol layar (klik) — selain ENTER keyboard. Tanpa ini CTA di
+  // index.html ("KLIK UNTUK MULAI") tidak melakukan apa-apa.
+  _wireScreenButtons() {
+    const start = el('title-start');
+    if (start && !start.dataset.wired) {
+      start.dataset.wired = '1';
+      start.addEventListener('click', () => {
+        if (this.stateName !== 'title') return;
+        this.audio.ensure();
+        this.stateName = 'play';
+        this._showOnly(null);
+        this.dialog.show('Mira', 'Selamat datang di Neon Bay. Pergi ke marker garage — tekan ENTER untuk job pertama.', 7);
+        this.radio.setPlaying(true);
+      });
+    }
+    const resume = el('pause-resume');
+    if (resume && !resume.dataset.wired) {
+      resume.dataset.wired = '1';
+      resume.addEventListener('click', () => {
+        if (this.stateName !== 'pause') return;
+        this.stateName = 'play';
+        this._showOnly(null);
+      });
+    }
+    const retry = el('wasted-retry');
+    if (retry && !retry.dataset.wired) {
+      retry.dataset.wired = '1';
+      retry.addEventListener('click', () => {
+        if (this.stateName !== 'wasted' && this.stateName !== 'busted') return;
+        this.stateName = 'play';
+        this._showOnly(null);
+      });
     }
   }
 
-  function updatePlayer(state, dt) {
-    var p = state.player;
-    var input = state.input;
-    var axis = input.axis();
-    if (p.inCar && p.car) {
-      var car = p.car;
-      if (axis.y < 0) car.speed += C.car.accel * dt;
-      if (axis.y > 0) car.speed -= (car.speed > 0 ? C.car.brake : C.car.reverseAccel) * dt;
-      if (input.isDown('space')) car.speed -= Math.sign(car.speed) * C.car.brake * dt;
-      // Round 3: garage engine tunes raise this car's top speed.
-      var topSpeed = car.topSpeed || C.car.maxSpeed;
-      car.speed = Math.max(-C.car.maxReverse, Math.min(topSpeed, car.speed));
-      if (axis.y === 0 && !input.isDown('space')) {
-        car.speed *= Math.pow(C.car.drag, dt * 60);
-        if (Math.abs(car.speed) < 4) car.speed = 0;
-      }
-      var steer = axis.x * C.car.turnRate * Math.min(1, Math.abs(car.speed) / 120);
-      if (car.speed < 0) steer = -steer;
-      car.angle += steer * dt;
-      var prevX = car.x, prevY = car.y;
-      var nx = car.x + Math.cos(car.angle) * car.speed * dt;
-      var ny = car.y + Math.sin(car.angle) * car.speed * dt;
-      var hit = NB.World.collideBuildings(state.city, nx, ny, 22);
-      if (hit || NB.World.isWater(nx, ny)) {
-        // Bounce off the wall instead of grinding inside it: restore the
-        // pre-move position so the car can never get wedged in a building.
-        car.x = prevX; car.y = prevY;
-        car.speed *= -0.3;
-        car.health -= 6;
-        state.audio.crash();
-        state.particles.burst(car.x, car.y, '#ffa502', 12, 180);
-        if (car.health <= 0) { gameOver(state, false); return; }
-      } else {
-        car.x = nx; car.y = ny;
-      }
-      p.x = car.x; p.y = car.y; p.angle = car.angle;
-      state.speedKmh = Math.abs(car.speed) * 0.32;
-      state.audio.setEngine(Math.abs(car.speed) / C.car.maxSpeed, true);
-      if (Math.abs(car.speed) > 380 && Math.random() < dt * 0.2 && state.wanted < 5) {
-        raiseWanted(state, 1, 'Speeding past a patrol!');
-      }
+  // ---------- garage ----------
+  _wireGaragePanel() {
+    const panel = el('garage-panel');
+    if (!panel || this._garageWired) return;
+    this._garageWired = true;
+    panel.innerHTML = '<h2>GARAGE MIRA</h2>' +
+      '<p>1 — Engine +1 ($300) &nbsp; 2 — Body repair ($150) &nbsp; 3 — Paint ($100)</p>' +
+      '<p>Ammo diisi ulang gratis di sini. Tekan G / Esc untuk tutup.</p>' +
+      '<button data-act="engine">Engine +1</button> ' +
+      '<button data-act="repair">Repair</button> ' +
+      '<button data-act="paint">Paint</button> ' +
+      '<button data-act="close">Tutup (G)</button>';
+    panel.querySelectorAll('button').forEach((b) => {
+      b.addEventListener('click', () => {
+        if (b.dataset.act === 'close') this._closeGarage();
+        else this._garageAction(b.dataset.act);
+      });
+    });
+  }
+
+  _openGarage() {
+    this.garage.open = true;
+    this.garage.refillAmmo(this.weapons);
+    show('garage-panel', true);
+    this.toast('Garage dibuka — ammo diisi ulang.');
+    this.audio.uiClick();
+  }
+
+  _closeGarage() {
+    this.garage.open = false;
+    show('garage-panel', false);
+    this.save();
+  }
+
+  _garageAction(act) {
+    let res = null;
+    if (act === 'engine') res = this.garage.buyEngine(this.state);
+    else if (act === 'repair') res = this.garage.repair(this.state, this.entities.playerCar);
+    else if (act === 'paint') {
+      res = this.garage.paint(this.state);
+      if (res.ok) this.entities.playerCar.color = this.garage.paintColor;
+    }
+    if (res) { this.toast(res.msg, 4); this.audio.uiClick(); this.save(); }
+  }
+
+  // ---------- render + HUD ----------
+  _renderOnly(dt) {
+    const e = this.entities;
+    if (!e) return;
+    const p = e.player;
+    const mode = p.inCar ? 'car' : 'foot';
+    try { Render.setChaseCamera(p.x, p.z, p.heading, mode); } catch (err) {}
+    // Mode screenshot (frozen): beacon dipakai apa adanya dari preset
+    // shots.js — jangan dihitung ulang dari misi, kalau tidak preset
+    // cover/drive kehilangan beacon-nya.
+    if (this.frozen) {
+      try { Render.setBeacon(this.beacon.x, this.beacon.z, this.beacon.visible); } catch (err) {}
     } else {
-      var run = input.isDown('shift');
-      var spd = run ? C.player.runSpeed : C.player.walkSpeed;
-      var mx = axis.x, my = axis.y;
-      if (mx !== 0 || my !== 0) {
-        var len = Math.sqrt(mx * mx + my * my);
-        mx /= len; my /= len;
-        p.angle = Math.atan2(my, mx);
-        var nx2 = p.x + mx * spd * dt;
-        var ny2 = p.y + my * spd * dt;
-        if (!NB.World.collideBuildings(state.city, nx2, ny2, C.player.radius) &&
-            !NB.World.isWater(nx2, ny2)) {
-          p.x = nx2; p.y = ny2;
-          p.walkPhase += dt * 10;
-        }
-      }
-      state.speedKmh = (mx !== 0 || my !== 0) ? spd * 0.32 : 0;
-      state.audio.setEngine(0, false);
+      const beacon = this.missions ? this.missions.beaconTarget(e.spawns) : null;
+      const beaconVisible = this.stateName === 'play' && !!beacon;
+      if (beacon) this.beacon = { x: beacon.x, z: beacon.z, visible: beaconVisible };
+      try { Render.setBeacon(this.beacon.x, this.beacon.z, this.beacon.visible); } catch (err) {}
     }
-    // Keep the player inside the world.
-    p.x = Math.max(24, Math.min(C.worldWidth - 24, p.x));
-    p.y = Math.max(24, Math.min(C.worldHeight - 24, p.y));
+    try { Render.setHeli(e.heli.x, e.heli.z, e.heli.visible); } catch (err) {}
+    const list = [...e.toSyncList(), ...this.rivals.toSyncList()];
+    try { Render.syncEntities(list); } catch (err) {}
+    // Satu frame 3D: animasi + gambar scene ke canvas WebGL.
+    try { Render.render(); } catch (err) {}
+    this._updateHud();
+    // Minimap via Render.updateMinimap tiap frame (jalan dari worldData.roadPos).
+    const blips = [
+      { x: e.spawns.garage.x, z: e.spawns.garage.z, color: '#facc15' },
+      { x: e.spawns.pier.x, z: e.spawns.pier.z, color: '#22d3ee' },
+      { x: e.spawns.hideout.x, z: e.spawns.hideout.z, color: '#a3e635' },
+      { x: e.spawns.arcade.x, z: e.spawns.arcade.z, color: '#c084fc' },
+    ];
+    if (this.beacon.visible) blips.push({ x: this.beacon.x, z: this.beacon.z, color: '#ff2d78' });
+    for (const c of e.police) blips.push({ x: c.x, z: c.z, color: '#3b82f6' });
+    for (const r of this.rivals.list) if (r.hp > 0) blips.push({ x: r.x, z: r.z, color: '#f43f5e' });
+    for (const t of e.traffic) blips.push({ x: t.x, z: t.z, color: '#e2e8f0' });
+    try { Render.updateMinimap(p.x, p.z, p.heading, blips); } catch (err) {}
   }
 
-  function updateCollisions(state, dt) {
-    var p = state.player;
-    var pr = p.inCar ? 24 : C.player.radius;
-    // Traffic bumps.
-    var allCars = state.traffic.concat(state.police);
-    for (var i = 0; i < allCars.length; i++) {
-      var c = allCars[i];
-      if (c._bumpCd > 0) c._bumpCd -= dt;
-      if (p.inCar && p.car === c) continue;
-      var d2 = dist2(p, c);
-      var rr = pr + 24;
-      if (d2 < rr * rr) {
-        var d = Math.sqrt(d2) || 1;
-        var push = (rr - d) / d;
-        var dx = (p.x - c.x) * push, dy = (p.y - c.y) * push;
-        // Round 4: spawn grace — bumps still shove, but never hurt.
-        var shielded = state.grace > 0;
-        if (p.inCar) {
-          // Shove the cars apart so traffic cannot pin the player in place,
-          // and only charge damage once per bump instead of every frame.
-          p.car.x += dx * 0.6;
-          p.car.y += dy * 0.6;
-          p.x = p.car.x; p.y = p.car.y;
-          p.car.speed *= 0.85;
-          c.speed *= 0.4;
-          if (!shielded && (!c._bumpCd || c._bumpCd <= 0)) {
-            c._bumpCd = 0.6;
-            p.car.health -= 4;
-            state.audio.crash();
-            state.particles.burst(p.x, p.y, '#ffa502', 10, 150);
-            if (Math.random() < 0.35) raiseWanted(state, 1, 'You smashed into traffic!');
-          }
-          if (p.car.health <= 0) { gameOver(state, false); return; }
-        } else {
-          p.x += dx; p.y += dy;
-          if (!shielded) {
-            p.health -= 2;
-            if (p.health <= 0) { gameOver(state, false); return; }
-          }
-        }
-      }
+  _updateHud() {
+    const set = (id, v) => { const n = el(id); if (n) n.textContent = v; };
+    const e = this.entities;
+    const p = e.player;
+    set('hud-money', `$${this.state.money}`);
+    set('hud-score', `SKOR ${this.state.score}`);
+    set('hud-jobs', `JOB ${this.missions ? this.missions.completed : 0}/7 SELESAI`);
+    const stars = this.wanted.stars();
+    set('hud-wanted', stars > 0 ? '★'.repeat(stars) + '☆'.repeat(5 - stars) : '☆☆☆☆☆');
+    if (this.missions) {
+      set('hud-mission', this.missions.active ? this.missions.active.name : (this.missions.nextDef() ? this.missions.nextDef().name : 'FREE-ROAM'));
+      let sub = this.missions.objectiveText();
+      if (this.missions.active && this.missions.timer > 0) sub += ` — ${Math.ceil(this.missions.timer)} dtk`;
+      set('hud-mission-sub', sub);
     }
-    // Pedestrian collisions — the crime that raises heat.
-    for (var j = 0; j < state.peds.length; j++) {
-      var ped = state.peds[j];
-      var pd2 = dist2(p, ped);
-      var prr = pr + 10;
-      if (pd2 < prr * prr) {
-        if (p.inCar && Math.abs(p.car.speed) > 60) {
-          ped.x = -9999; ped.y = -9999; // knocked out of the scene
-          state.particles.burst(ped.x === -9999 ? p.x : ped.x, p.y, '#ff6b81', 14, 200);
-          raiseWanted(state, 1, 'You hit a pedestrian!');
-          p.car.speed *= 0.7;
-          state.audio.crash();
-        } else if (!p.inCar) {
-          ped.angle += Math.PI / 2;
-        }
-      }
-    }
-    // Police contact.
-    for (var k = 0; k < state.police.length; k++) {
-      var cop = state.police[k];
-      // Round 4: spawn grace shields the player from police contact.
-      if (state.grace > 0) continue;
-      var cd2 = dist2(p, cop);
-      if (cd2 < 30 * 30) {
-        if (p.inCar) {
-          p.car.health -= 8 * dt * 10;
-          cop.speed *= 0.6;
-          if (p.car.health <= 0) { gameOver(state, false); return; }
-        } else {
-          gameOver(state, true);
-          return;
-        }
-      }
-    }
-    // Round 4: Coral runners shove the player on contact — also
-    // shielded by spawn grace.
-    if (state.grace <= 0) {
-      for (var q = 0; q < state.runners.length; q++) {
-        var run = state.runners[q];
-        if (run.dead) continue;
-        var rd2 = dist2(p, run);
-        if (rd2 < 26 * 26) {
-          if (p.inCar) {
-            p.car.health -= 8 * dt;
-            if (p.car.health <= 0) { gameOver(state, false); return; }
-          } else {
-            p.health -= 10 * dt;
-            if (p.health <= 0) { gameOver(state, false); return; }
-          }
-        }
-      }
-    }
+    set('hud-speed', p.inCar && e.playerCar ? `${Math.round(Math.abs(e.playerCar.speed) * 3.6)} km/j` : `${Math.round(Math.abs(p.speed) * 3.6)} km/j`);
+    set('hud-condition', e.playerCar ? `Kondisi ${Math.round(e.playerCar.condition)}%` : '—');
+    set('hud-weapon', `${this.weapons.currentName()} — ${this.weapons.ammoText()}`);
+    set('hud-radio', this.radio.currentName());
+    set('hud-respect', `${this.respect.rankName()} (${this.respect.points} RP)`);
   }
 
-  function updateWanted(state, dt) {
-    if (state.wanted > 0) {
-      state.wantedTimer -= dt;
-      if (state.wantedTimer <= 0) {
-        state.wanted--;
-        state.wantedTimer = C.wantedDecaySeconds;
-        if (state.wanted === 0) {
-          state.police.length = 0;
-          state.missions.showMessage('You lost the heat. Stay cool.', 3);
-        }
-      }
-    }
-    state.audio.setSiren(state.wanted >= 2 && state.screen === 'play', dt);
-  }
+  // (Minimap digambar Render.updateMinimap di _renderOnly; _drawMinimap lama
+  // yang menggambar sendiri sudah dihapus supaya hanya ada satu sumber.)
+}
 
-  function gameOver(state, busted) {
-    state.screen = 'over';
-    state.busted = busted;
-    state.audio.setSiren(false, 0);
-    state.audio.busted();
-    if (state.missions.cash > state.bestCash) state.bestCash = state.missions.cash;
-    if (state.score > state.bestScore) state.bestScore = state.score;
-    saveGame(state);
-  }
-
-  function startGame(state) {
-    state.screen = 'play';
-    state.audio.unlock();
-    state.audio.startEngine();
-    state.missions.start(state);
-  }
-
-  function resetRun(state) {
-    var fresh = createState(state.canvas);
-    // Keep the canvas, input and audio objects from the live state.
-    fresh.input = state.input;
-    fresh.audio = state.audio;
-    fresh.canvas = state.canvas;
-    fresh.ctx = state.ctx;
-    Object.keys(state).forEach(function (k) { delete state[k]; });
-    Object.keys(fresh).forEach(function (k) { state[k] = fresh[k]; });
-    state.screen = 'play';
-    state.missions.start(state);
-  }
-
-  function update(state, dt) {
-    state.time += dt;
-    if (state.screen !== 'play') return;
-    // Round 3: while the garage panel is open the city waits.
-    if (state.garage.open) {
-      if (state.input.wasPressed('g')) { state.garage.open = false; state.audio.click(); }
-      for (var g = 0; g < 4; g++) {
-        if (state.input.wasPressed('' + (g + 1))) state.garage.buy(state, g);
-      }
-      state.radio.update(state, dt);
-      state.dialog.update(dt, state);
-      return;
-    }
-    // Round 4: showcase freeze — while a screenshot preset is staged,
-    // the city holds its pose: no movement, no mission timer, no
-    // damage. Only the clock, the radio and dialogue keep running so
-    // the frame stays alive.
-    if (state.shot) {
-      state.radio.update(state, dt);
-      state.dialog.update(dt, state);
-      return;
-    }
-    // Round 4: spawn grace ticks down in normal play.
-    if (state.grace > 0) state.grace -= dt;
-    updatePlayer(state, dt);
-    if (state.screen !== 'play') return;
-    NB.Entities.updateTraffic(state.traffic, dt, state.city, state.player.inCar ? state.player.car : null);
-    NB.Entities.updatePeds(state.peds, dt, state.city);
-    NB.Entities.updatePolice(state.police, state.player, dt, state.city);
-    state.particles.update(dt);
-    // Round 3 systems.
-    state.weapons.tick(dt);
-    NB.WeaponsRuntime.updateBullets(state, dt);
-    NB.Heat.updateHeli(state, dt);
-    NB.Heat.updateRoadblocks(state, dt);
-    state.radio.update(state, dt);
-    state.dialog.update(dt, state);
-    if (state.rival) state.rival.update(state, dt);
-    NB.Rivals.updateRunners(state, dt);
-    updateCollisions(state, dt);
-    if (state.screen !== 'play') return;
-    updateWanted(state, dt);
-    // Round 4: watch the wanted level for rises and arm alert banners.
-    NB.Wanted.update(state, dt);
-    state.missions.update(dt, state);
-    if (state.missions.phase === 'active' && state.missions.checkProgress(state)) {
-      state.missions.complete(state);
-      state.audio.pickup();
-    }
-    // Round 3: shooting. Click aims at the cursor; F fires where you face.
-    if (state.input.mouse.clicked) {
-      var wx = state.cam.x + state.input.mouse.clickX / C.zoom;
-      var wy = state.cam.y + state.input.mouse.clickY / C.zoom;
-      state.weapons.fire(state, wx, wy);
-    }
-    if (state.input.wasPressed('f')) {
-      var p = state.player;
-      state.weapons.fire(state, p.x + Math.cos(p.angle) * 200, p.y + Math.sin(p.angle) * 200);
-    }
-    // Round 3: garage, radio and the weapon wheel.
-    if (state.input.wasPressed('g') && state.garage.near(state)) {
-      state.garage.open = true;
-      state.audio.click();
-      state.missions.showMessage('Welcome to Rico\'s Garage.', 2);
-    }
-    if (state.input.wasPressed('r')) state.radio.next(state);
-    for (var w = 0; w < 4; w++) {
-      if (state.input.wasPressed('' + (w + 1))) state.weapons.select(w, state);
-    }
-    // Camera follows the player (zoomed view: a smaller world window).
-    state.cam.x = Math.max(0, Math.min(C.worldWidth - state.viewW, state.player.x - state.viewW / 2));
-    state.cam.y = Math.max(0, Math.min(C.worldHeight - state.viewH, state.player.y - state.viewH / 2));
-    if (state.input.wasPressed('e')) {
-      if (state.player.inCar) exitCar(state); else enterCar(state);
-    }
-    if (state.input.wasPressed('enter') && state.missions.phase === 'brief') {
-      state.missions.start(state);
-    }
-    if (state.input.wasPressed('h')) state.audio.honk();
-  }
-
-  function render(state) {
-    var ctx = state.ctx;
-    if (state.screen === 'start') {
-      NB.Render.drawStartScreen(ctx, state);
-      return;
-    }
-    // Round 3: 1.5x zoom — the car reads bigger, the city feels closer.
-    ctx.save();
-    ctx.scale(C.zoom, C.zoom);
-    ctx.translate(-Math.round(state.cam.x), -Math.round(state.cam.y));
-    NB.Render.drawGround(ctx, state.cam, state.city, state.time);
-    NB.Render.drawCityProps(ctx, state.cam, state.city, state.time);
-    NB.Garage.drawGarageMarker(ctx, state, state.time);
-    // Round 4 hero frame: the beacon already marks the target, so the
-    // plain marker stays off and the frame keeps a single focal point.
-    if (state.missions.phase === 'active' && !state.heroFrame) {
-      NB.Render.drawMarker(ctx, state.missions.current().target, state.time);
-    }
-    var i;
-    for (i = 0; i < state.parked.length; i++) NB.Render.drawCar(ctx, state.parked[i]);
-    for (i = 0; i < state.traffic.length; i++) NB.Render.drawCar(ctx, state.traffic[i]);
-    for (i = 0; i < state.police.length; i++) NB.Render.drawCar(ctx, state.police[i]);
-    if (state.rival) NB.Render.drawCar(ctx, state.rival.car);
-    if (state.player.inCar && state.player.car) NB.Render.drawCar(ctx, state.player.car);
-    for (i = 0; i < state.peds.length; i++) {
-      if (state.peds[i].x > -100) NB.Render.drawPed(ctx, state.peds[i]);
-    }
-    for (i = 0; i < state.runners.length; i++) {
-      var r = state.runners[i];
-      if (!r.dead) { NB.Render.drawPed(ctx, r); NB.Rivals.drawRunner(ctx, r); }
-    }
-    NB.Render.drawPlayer(ctx, state.player);
-    NB.Render.drawBullets(ctx, state.bullets);
-    NB.Render.drawParticles(ctx, state.particles);
-    for (i = 0; i < state.roadblocks.length; i++) NB.Heat.drawRoadblock(ctx, state.roadblocks[i]);
-    NB.Heat.drawHeli(ctx, state.heli, state.time);
-    // Round 4: pulsing mission beacon over the active target.
-    NB.Beacon.drawWorld(ctx, state);
-    if (state.rival) NB.Rivals.drawRival(ctx, state.rival);
-    ctx.restore();
-    // Round 4: golden-hour vignette over the world, under the HUD.
-    NB.Visuals.drawVignette(ctx);
-    // Round 4: off-screen target arrow.
-    NB.Beacon.drawEdgeArrow(ctx, state);
-    NB.Render.drawHud(ctx, state);
-    // Round 4: mission briefing card while the next job waits for ENTER.
-    if (state.screen === 'play' && state.missions.phase === 'brief') NB.Render.drawBriefingCard(ctx, state);
-    state.dialog.draw(ctx, state);
-    if (state.garage.open) NB.Garage.drawGaragePanel(ctx, state);
-    if (state.screen === 'paused') NB.Render.drawPaused(ctx);
-    if (state.screen === 'over') NB.Render.drawGameOver(ctx, state);
-  }
-
-  function handleGlobalKeys(state) {
-    var input = state.input;
-    if (input.wasPressed('m')) {
-      var muted = state.audio.toggleMute();
-      state.missions.showMessage(muted ? 'Sound off' : 'Sound on', 1.5);
-    }
-    if (state.screen === 'start') {
-      if (input.wasPressed('enter') || input.wasPressed('space')) { startGame(state); return; }
-      if (input.mouse.clicked && state.startButton) {
-        var b = state.startButton;
-        if (input.mouse.clickX >= b.x && input.mouse.clickX <= b.x + b.w &&
-            input.mouse.clickY >= b.y && input.mouse.clickY <= b.y + b.h) {
-          startGame(state); return;
-        }
-      }
-      return;
-    }
-    if (state.screen === 'over') {
-      if (input.wasPressed('r') || input.wasPressed('enter')) resetRun(state);
-      return;
-    }
-    if (input.wasPressed('p')) {
-      state.screen = state.screen === 'paused' ? 'play' : 'paused';
-      state.audio.setSiren(false, 0);
-    }
-  }
-
-  // Screenshot presets: deterministic scenes driven by ?shot=<name> so the
-  // shipped screenshots show real gameplay, not the menu. Each scene is
-  // staged dense: traffic around the player, police in a fan (never a
-  // straight line), the heli and a roadblock in the chase, and a live
-  // shootout in the mission frame.
-  function applyShot(state, name) {
-    state.shot = name;
-    state.screen = 'play';
-    state.audio.unlock();
-    var p = state.player;
-    // Cluster traffic and pedestrians around the player so every frame
-    // reads busy instead of empty.
-    function clusterTraffic(cx, cy, n) {
-      for (var i = 0; i < n && i < state.traffic.length; i++) {
-        var c = state.traffic[i];
-        var a = (i / n) * Math.PI * 2;
-        c.x = cx + Math.cos(a) * (140 + (i % 3) * 90);
-        c.y = cy + Math.sin(a) * (110 + (i % 2) * 70);
-        c.angle = a + Math.PI / 2;
-        c.speed = 60 + (i % 4) * 30;
-        c.targetSpeed = c.speed;
-      }
-      for (var j = 0; j < 8 && j < state.peds.length; j++) {
-        var ped = state.peds[j];
-        ped.x = cx + (j % 4 - 1.5) * 90;
-        ped.y = cy + (Math.floor(j / 4) - 0.5) * 120;
-      }
-    }
-    // Police fan: cruisers closing from spread angles, never a line.
-    function fanPolice(cx, cy, count) {
-      state.police.length = 0;
-      var angles = [-1.1, -0.35, 0.35, 1.1, -1.8];
-      for (var i = 0; i < count; i++) {
-        var a = angles[i % angles.length];
-        var d = 300 + (i % 3) * 90;
-        var cop = NB.Entities.makeCar(cx + Math.cos(a) * d, cy + Math.sin(a) * d, a + Math.PI, '#1a1a2e', 'police');
-        cop.speed = 220;
-        state.police.push(cop);
-      }
-    }
-    if (name === 'start') {
-      enterCarAt(state, 1000, 1248);
-      state.missions.index = 0;
-      state.missions.start(state);
-      state.missions.timeLeft = 118;
-      clusterTraffic(1000, 1248, 8);
-    } else if (name === 'drive') {
-      enterCarAt(state, 1400, 1248);
-      state.missions.index = 1;
-      state.missions.start(state);
-      state.missions.timeLeft = 68;
-      clusterTraffic(1400, 1248, 10);
-    } else if (name === 'chase') {
-      enterCarAt(state, 1000, 1248);
-      state.wanted = 4;
-      state.wantedTimer = 999;
-      fanPolice(1000, 1248, 4);
-      NB.Heat.spawnRoadblock(state);
-      state.heli.active = true;
-      state.heli.x = 820; state.heli.y = 1050;
-      state.missions.index = 2;
-      state.missions.start(state);
-      state.missions.timeLeft = 42;
-      clusterTraffic(1000, 1248, 6);
-    } else if (name === 'mission') {
-      // Shootout frame: mission 6, on foot with the scattergun, Coral
-      // runners closing in and tracer fire already in the air.
-      state.missions.index = 5;
-      p.x = 1700; p.y = 1300; p.angle = 0; p.inCar = false; p.car = null;
-      state.missions.start(state);
-      state.missions.timeLeft = 96;
-      state.weapons.select(1, state);
-      for (var k = 0; k < state.runners.length; k++) {
-        var r = state.runners[k];
-        var ra = k * 1.26;
-        r.x = 1700 + Math.cos(ra) * 220;
-        r.y = 1300 + Math.sin(ra) * 170;
-      }
-      for (var b = 0; b < 4; b++) {
-        var ba = b * 0.9 - 0.6;
-        state.bullets.push({
-          x: 1700 + Math.cos(ba) * 60, y: 1300 + Math.sin(ba) * 60,
-          vx: Math.cos(ba) * 760, vy: Math.sin(ba) * 760,
-          life: 0.6, damage: 11, color: '#ff8c42'
-        });
-      }
-      state.wanted = 2;
-      state.wantedTimer = 999;
-      fanPolice(1700, 1300, 2);
-      clusterTraffic(1700, 1300, 4);
-    } else if (name === 'hero') {
-      // Hero frame: mission 7 at the Pier under five stars. The truck,
-      // the beacon and the NBPD response are staged exactly by
-      // stageHeroFrame after the settle loop, so this branch only opens
-      // the job and seeds the ambient traffic to cluster around the pier.
-      enterCarAt(state, 2930, 330);
-      state.missions.index = 6;
-      state.missions.start(state);
-      state.missions.timeLeft = 118;
-      state.wanted = 5;
-      state.wantedTimer = 999;
-      state.heli.active = true;
-      clusterTraffic(2930, 330, 6);
-    }
-    // Let traffic and peds settle for a few frames before the shot.
-    for (var i = 0; i < 40; i++) {
-      NB.Entities.updateTraffic(state.traffic, 1 / 60, state.city, state.player.inCar ? state.player.car : null);
-      NB.Entities.updatePeds(state.peds, 1 / 60, state.city);
-      NB.Entities.updatePolice(state.police, p, 1 / 60, state.city);
-    }
-    state.cam.x = Math.max(0, Math.min(C.worldWidth - state.viewW, p.x - state.viewW / 2));
-    state.cam.y = Math.max(0, Math.min(C.worldHeight - state.viewH, p.y - state.viewH / 2));
-    // Round 4 hero frame: exact staging and camera offset, applied
-    // after the settle loop so nothing drifts before the screenshot.
-    if (name === 'hero') stageHeroFrame(state);
-  }
-
-  // Round 4 hero frame: one deterministic composition for mission 7
-  // (KINGPIN'S LAST RUN) — the money truck in the foreground, the Pier
-  // beacon above it, AIR-1 and two cruisers in the frame, a roadblock
-  // between the truck and the target, pier signage and string lights in
-  // view, and only the key HUD (objective banner, wanted stars, neon
-  // radar) on screen. Canvas is 960x600, zoom 1.5, so the camera sees
-  // a 640x400 world window; the camera sits at the east clamp
-  // (x 2560, y 50) which puts the truck lower-centre-right at screen
-  // (555, 420) and the beacon upper-centre at screen (510, 225).
-  // Everything not part of the composition is parked off-frame or
-  // switched off: the plain target marker (the beacon already marks
-  // the target), the centre message plate (the banner already carries
-  // title + timer), the wanted alert (five stars already say it) and
-  // the crew dialogue box (its plate would cover the truck).
-  function stageHeroFrame(state) {
-    var p = state.player;
-    var i;
-    state.heroFrame = true;
-    // Truck on the sand by the pier, nose east toward the boat.
-    p.x = 2930; p.y = 330; p.angle = 0;
-    if (p.car) { p.car.x = 2930; p.car.y = 330; p.car.angle = 0; p.car.speed = 0; }
-    // Camera: east clamp — beach, water and pier lights all read.
-    state.cam.x = 2560;
-    state.cam.y = 50;
-    // AIR-1 upper-left, searchlight sweeping down toward the pier.
-    // Parked at canvas (300,195): below the cafe sign and the wanted
-    // text, left of the cruisers and the beacon ring — body, rotor and
-    // tail all clear of every HUD plate and sign.
-    state.heli.active = true;
-    state.heli.x = 2760; state.heli.y = 180;
-    state.heli.sweep = 0; state.heli.rotor = 0; state.heli.phase = 0;
-    // Two cruisers on the pier road: one ahead by the cafe sign, one
-    // closing from behind — both clear of the HUD plates.
-    state.police.length = 0;
-    state.police.push(NB.Entities.makeCar(2848, 150, Math.PI / 2, '#1a1a2e', 'police'));
-    state.police.push(NB.Entities.makeCar(2848, 390, -Math.PI / 2, '#1a1a2e', 'police'));
-    // One roadblock on the pier road between the truck and the beacon.
-    state.roadblocks.length = 0;
-    state.roadblocks.push({ x: 2848, y: 320, angle: Math.PI / 2, health: 60 });
-    // Two beach cars for depth: one by the pier lights, one mid-frame
-    // left. The rest of the traffic parks off-frame so the shot stays
-    // clean.
-    if (state.traffic.length > 0) {
-      var t1 = state.traffic[0];
-      t1.x = 2970; t1.y = 280; t1.angle = -Math.PI / 2; t1.speed = 0; t1.targetSpeed = 0;
-    }
-    if (state.traffic.length > 1) {
-      var t2 = state.traffic[1];
-      t2.x = 2620; t2.y = 220; t2.angle = 0; t2.speed = 0; t2.targetSpeed = 0;
-    }
-    for (i = 2; i < state.traffic.length; i++) {
-      state.traffic[i].x = 200; state.traffic[i].y = 200;
-      state.traffic[i].speed = 0; state.traffic[i].targetSpeed = 0;
-    }
-    // Four pedestrians on the pier approach; the rest wait off-frame.
-    var pedSpots = [[2900, 300], [2960, 260], [2780, 380], [2650, 200]];
-    for (i = 0; i < state.peds.length; i++) {
-      if (i < pedSpots.length) { state.peds[i].x = pedSpots[i][0]; state.peds[i].y = pedSpots[i][1]; }
-      else { state.peds[i].x = 200; state.peds[i].y = 200; }
-    }
-    // Parked cars other than the player's truck wait off-frame.
-    for (i = 1; i < state.parked.length; i++) {
-      state.parked[i].x = 200; state.parked[i].y = 200;
-    }
-    // Silence the duplicate HUD: centre message off (banner carries
-    // title + timer), alert off (five stars carry the heat), dialogue
-    // off (its plate would cover the truck).
-    state.missions.message = '';
-    state.missions.messageTimer = 0;
-    if (state.wantedFx) { state.wantedFx.alert = ''; state.wantedFx.alertTimer = 0; }
-    if (state.dialog) { state.dialog.active = false; state.dialog.who = null; }
-  }
-
-  function enterCarAt(state, x, y) {
-    var p = state.player;
-    var car = state.parked[0];
-    car.x = x; car.y = y; car.angle = 0; car.speed = 120;
-    p.inCar = true;
-    p.car = car;
-    car.kind = 'player';
-    p.x = x; p.y = y; p.angle = 0;
-  }
-
-  function boot() {
-    var canvas = document.getElementById('game');
-    canvas.width = C.canvasWidth;
-    canvas.height = C.canvasHeight;
-    var state = createState(canvas);
-    var params = new URLSearchParams(window.location.search || '');
-    var shot = params.get('shot');
-    var last = performance.now();
-    function frame(now) {
-      var dt = Math.min(0.05, (now - last) / 1000 || 0.016);
-      last = now;
-      handleGlobalKeys(state);
-      update(state, dt);
-      render(state);
-      state.input.endFrame();
-      requestAnimationFrame(frame);
-    }
-    if (shot) applyShot(state, shot);
-    // Test hook: lets automated playtests read live state without touching the DOM.
-    window.__neon = {
-      state: state,
-      screen: function () { return state.screen; },
-      score: function () { return state.score; },
-      cash: function () { return state.missions.cash; },
-      wanted: function () { return state.wanted; },
-      respect: function () { return { rp: state.respect.rp, rank: state.respect.rankName() }; },
-      weapon: function () { return state.weapons.def().name; },
-      heli: function () { return state.heli.active; },
-      roadblocks: function () { return state.roadblocks.length; },
-      radio: function () { return state.radio.name(); },
-      player: function () { return { x: state.player.x, y: state.player.y, inCar: state.player.inCar, speed: state.speedKmh }; }
-    };
-    document.getElementById('loading').textContent = '';
-    requestAnimationFrame(frame);
-  }
-
-  NB.boot = boot;
-  NB._internals = { createState: createState, raiseWanted: raiseWanted, enterCar: enterCar, exitCar: exitCar };
-})();
+// Boot saat DOM siap.
+function bootGame() {
+  const game = new Game();
+  window.__neonBay = game;
+  window.__neonBayRender = Render; // handle debug (posisi kamera, scene)
+  game.boot();
+}
+if (typeof document !== 'undefined') {
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bootGame);
+  else bootGame();
+}

@@ -1,139 +1,97 @@
-// Neon Bay — round 3 crew dialogue.
-// A dialogue box with a hand-drawn portrait (initial on a colored disc)
-// for Marco, Mira and Vega. Lines play at mission start and on mission
-// completion, advancing on their own timer; any key skips to the next line.
-(function () {
-  'use strict';
-  var NB = window.NeonBay;
+// dialog.js — kartu dialog & briefing misi (overlay DOM).
+// Mira (fixer, avatar pink "M"), Rico (bos kru), barks dispatch NBPD.
+// Elemen: hud-dialog, hud-dialog-name, hud-dialog-text.
 
-  var LINES = {
-    start: {
-      pickup: [
-        ['mira', 'Sunset pickup, courier. Rico\'s package is waiting at the pier.'],
-        ['marco', 'Traffic\'s light on the Strip. Take my car — bring it back clean.']
-      ],
-      delivery: [
-        ['mira', 'Package secured. Marina Hotel, and don\'t stop for anyone.'],
-        ['marco', 'Seventy-five seconds of open road. Make it count.']
-      ],
-      escape: [
-        ['mira', 'The whole Bay PD is on you. Lose them, then vanish at the arcade.'],
-        ['marco', 'Cut through the alleys. They can\'t chase what they can\'t see.']
-      ],
-      grandprix: [
-        ['vega', 'So you\'re the courier everyone\'s talking about. Four checkpoints. Try to keep up.'],
-        ['marco', 'Vega hasn\'t lost a race on this Strip. Tonight that changes.']
-      ],
-      heist: [
-        ['mira', 'Money truck at the Docks. Grab it and the heat is yours to lose.'],
-        ['marco', 'Three stars the moment you touch it. Drive like the sunset depends on it.']
-      ],
-      cleanhouse: [
-        ['mira', 'Five Coral runners on our turf. Send them home, one by one.'],
-        ['marco', 'They brought bats. You brought a Scattergun. Fair trade.']
-      ],
-      kingpin: [
-        ['mira', 'Five stars on your tail and a truck full of Rico\'s money. The boat leaves at the pier.'],
-        ['marco', 'AIR-1, roadblocks, the whole department. Drive like the sunset depends on it.']
-      ]
-    },
-    done: {
-      pickup: [['mira', 'Package in hand. Rico says you\'re quicker than the sunset.']],
-      delivery: [['marco', 'Delivered with time to spare. The hotel staff didn\'t even blink.']],
-      escape: [['mira', 'Clean getaway. The PD is still circling the arcade.']],
-      grandprix: [['vega', '...Fine. You\'re fast. Rematch at midnight — bring the same nerve.']],
-      heist: [['mira', 'The truck is ours. Rico is already counting it. Twice.']],
-      cleanhouse: [['marco', 'Five down, turf secure. The Strip is ours again tonight.']],
-      kingpin: [['mira', 'The money is on the boat. Rico says the Strip is yours now, Kingpin.']]
-    }
-  };
+const AVATARS = {
+  Mira: { letter: 'M', color: '#ff2d78' },
+  Rico: { letter: 'R', color: '#ffb020' },
+  NBPD: { letter: '!', color: '#3b82f6' },
+  System: { letter: 'i', color: '#22d3ee' },
+};
 
-  function createDialog() {
+export class Dialog {
+  constructor() {
+    this._timer = 0;
+    this._queue = [];
+    this.visible = false;
+  }
+
+  _els() {
     return {
-      who: null,
-      lines: [],
-      index: 0,
-      timer: 0,
-      active: false,
-      show: function (who, lines) {
-        this.who = who;
-        this.lines = lines.slice();
-        this.index = 0;
-        this.timer = 4;
-        this.active = true;
-      },
-      showFor: function (missionId, kind) {
-        var set = LINES[kind] && LINES[kind][missionId];
-        if (!set || set.length === 0) return;
-        // Chain the speakers: show the first line, queue the rest.
-        this.queue = set.slice(1);
-        this.show(set[0][0], [set[0][1]]);
-      },
-      next: function () {
-        if (this.queue && this.queue.length > 0) {
-          var line = this.queue.shift();
-          this.show(line[0], [line[1]]);
-          return;
-        }
-        this.active = false;
-        this.who = null;
-      },
-      update: function (dt, state) {
-        if (!this.active) return;
-        this.timer -= dt;
-        if (this.timer <= 0) this.next();
-        if (state.input.consumeAnyKey()) this.next();
-      },
-      draw: function (ctx, state) {
-        if (!this.active || !this.who) return;
-        var C = NB.Config;
-        var crew = NB.Crew[this.who];
-        if (!crew) return;
-        var bw = 600, bh = 104;
-        var bx = 12, by = C.canvasHeight - 180;
-        ctx.fillStyle = 'rgba(12,8,24,0.88)';
-        ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 10); ctx.fill();
-        ctx.strokeStyle = crew.color;
-        ctx.lineWidth = 2;
-        ctx.stroke();
-        // Portrait disc with the crew member's initial.
-        ctx.fillStyle = crew.color;
-        ctx.beginPath(); ctx.arc(bx + 46, by + bh / 2, 30, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = '#160a26';
-        ctx.font = 'bold 30px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText(crew.initial, bx + 46, by + bh / 2 + 11);
-        ctx.fillStyle = crew.color;
-        ctx.font = 'bold 15px sans-serif';
-        ctx.textAlign = 'left';
-        ctx.fillText(crew.name + '  •  ' + crew.role.toUpperCase(), bx + 88, by + 32);
-        ctx.fillStyle = '#fff3e0';
-        ctx.font = '14px sans-serif';
-        wrapText(ctx, this.lines[this.index] || '', bx + 88, by + 56, bw - 110, 18);
-        ctx.fillStyle = '#cbb8e0';
-        ctx.font = '11px sans-serif';
-        ctx.textAlign = 'right';
-        ctx.fillText('press any key ▸', bx + bw - 12, by + bh - 10);
-      }
+      box: document.getElementById('hud-dialog'),
+      name: document.getElementById('hud-dialog-name'),
+      text: document.getElementById('hud-dialog-text'),
     };
   }
 
-  function wrapText(ctx, text, x, y, maxW, lineH) {
-    var words = text.split(' ');
-    var line = '';
-    var yy = y;
-    for (var i = 0; i < words.length; i++) {
-      var test = line ? line + ' ' + words[i] : words[i];
-      if (ctx.measureText(test).width > maxW && line) {
-        ctx.fillText(line, x, yy);
-        line = words[i];
-        yy += lineH;
-      } else {
-        line = test;
-      }
-    }
-    if (line) ctx.fillText(line, x, yy);
+  show(name, text, seconds = 5) {
+    const { box, name: nameEl, text: textEl } = this._els();
+    if (!box || !nameEl || !textEl) return;
+    const av = AVATARS[name] || AVATARS.System;
+    nameEl.textContent = name;
+    nameEl.style.color = av.color;
+    nameEl.dataset.avatar = av.letter;
+    textEl.textContent = text;
+    box.style.display = 'block';
+    box.style.borderLeftColor = av.color;
+    this.visible = true;
+    this._timer = seconds;
   }
 
-  NB.Dialog = { createDialog: createDialog };
-})();
+  // Kartu briefing misi: tampil lebih lama, dengan nama misi + payout.
+  showBriefing(mission) {
+    const who = mission.briefer || 'Mira';
+    const text = `${mission.name} — ${mission.brief}. Bayaran $${mission.payout} + ${mission.respect} RP.` +
+      (mission.timer ? ` Batas waktu ${mission.timer} detik.` : '');
+    this.show(who, text, 8);
+  }
+
+  // Bark singkat dari dispatch / kru saat bermain.
+  bark(text, who = 'NBPD') { this.show(who, text, 3.5); }
+
+  queue(name, text, seconds = 5) { this._queue.push({ name, text, seconds }); }
+
+  hide() {
+    const { box } = this._els();
+    if (box) box.style.display = 'none';
+    this.visible = false;
+    this._timer = 0;
+  }
+
+  update(dt) {
+    if (!this.visible) {
+      if (this._queue.length) {
+        const next = this._queue.shift();
+        this.show(next.name, next.text, next.seconds);
+      }
+      return;
+    }
+    this._timer -= dt;
+    if (this._timer <= 0) {
+      this.hide();
+      if (this._queue.length) {
+        const next = this._queue.shift();
+        this.show(next.name, next.text, next.seconds);
+      }
+    }
+  }
+}
+
+// Barks acak yang dipakai main.js saat bermain.
+export const NBPD_BARKS = [
+  'Semua unit, tersangka mengarah ke Strip. Kejar dengan hati-hati.',
+  'NBPD ke semua unit: kendaraan mencurigakan di kawasan pelabuhan.',
+  'Dispatch: laporkan posisi tersangka, jangan kejar sendirian.',
+  'Unit 7, blokir persimpangan Strip. Jangan biarkan dia lolos.',
+  'Semua unit siaga, heli sudah di udara.',
+];
+export const MIRA_BARKS = [
+  'Mira: Kerja bagus. Rico mulai percaya sama kamu.',
+  'Mira: Jangan bikin keributan di Strip kalau tidak perlu.',
+  'Mira: Pelan-pelan, kota ini ingat semua wajah.',
+];
+export const RICO_BARKS = [
+  'Rico: Begitu caranya. Kru butuh orang seperti kamu.',
+  'Rico: Uang sudah ditransfer. Jangan tanya dari mana.',
+  'Rico: Neon Bay ini milik kita kalau kamu terus begini.',
+];

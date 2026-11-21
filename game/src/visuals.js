@@ -1,156 +1,178 @@
-// Neon Bay — round 3 golden-hour visuals.
-// The city gets depth: buildings are drawn with a sunset side face (a
-// 2.5D extrusion), the bay gets animated surf, intersections get
-// crosswalks, the Docks get stacked containers, and the whole frame gets a
-// warm vignette so the sunset feels like sunset.
-(function () {
-  'use strict';
-  var NB = window.NeonBay;
-  var C = NB.Config;
+// visuals.js — pabrik mesh untuk NEON BAY 3D (gta6-01 ronde 5)
+// Semua mesh menghadap +Z sebagai arah depan, supaya rotation.y = heading
+// dengan vektor maju (sin heading, 0, cos heading).
+// Material: MeshLambertMaterial; bagian bercahaya pakai MeshBasicMaterial.
 
-  // 2.5D building: a shaded side face on the south-east edge, so the roof
-  // reads as a slab catching the low sun instead of a flat rectangle.
-  function drawBuilding25D(ctx, b, time) {
-    var depth = 14;
-    // South face (sunlit warm) and east face (in shadow).
-    ctx.fillStyle = 'rgba(255, 140, 66, 0.55)';
-    ctx.beginPath();
-    ctx.moveTo(b.x, b.y + b.h);
-    ctx.lineTo(b.x + depth, b.y + b.h + depth);
-    ctx.lineTo(b.x + b.w + depth, b.y + b.h + depth);
-    ctx.lineTo(b.x + b.w, b.y + b.h);
-    ctx.closePath();
-    ctx.fill();
-    ctx.fillStyle = 'rgba(20, 8, 32, 0.55)';
-    ctx.beginPath();
-    ctx.moveTo(b.x + b.w, b.y);
-    ctx.lineTo(b.x + b.w + depth, b.y + depth);
-    ctx.lineTo(b.x + b.w + depth, b.y + b.h + depth);
-    ctx.lineTo(b.x + b.w, b.y + b.h);
-    ctx.closePath();
-    ctx.fill();
-    // Long sunset shadow stretching west.
-    ctx.fillStyle = 'rgba(20, 8, 32, 0.28)';
-    ctx.beginPath();
-    ctx.moveTo(b.x, b.y + b.h);
-    ctx.lineTo(b.x - 46, b.y + b.h + 18);
-    ctx.lineTo(b.x + b.w - 20, b.y + b.h + 18);
-    ctx.lineTo(b.x + b.w, b.y + b.h);
-    ctx.closePath();
-    ctx.fill();
-  }
+const THREE = window.THREE;
 
-  // Animated surf: three foam lines rolling along the beach, plus a slow
-  // swell that breathes in and out with time.
-  function drawWaves(ctx, cam, time) {
-    var y0 = Math.max(0, cam.y - 40);
-    var y1 = Math.min(C.worldHeight, cam.y + C.canvasHeight + 40);
-    if (cam.x + C.canvasWidth < 2880) return;
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
-    ctx.lineWidth = 3;
-    for (var w = 0; w < 3; w++) {
-      var baseX = 3090 + w * 26 + Math.sin(time * 0.8 + w * 1.7) * 8;
-      ctx.beginPath();
-      for (var y = Math.floor(y0 / 30) * 30; y < y1; y += 30) {
-        var xx = baseX + Math.sin(y * 0.02 + time * 1.3 + w) * 7;
-        if (y === Math.floor(y0 / 30) * 30) ctx.moveTo(xx, y); else ctx.lineTo(xx, y);
-      }
-      ctx.stroke();
+function lambert(color) {
+  return new THREE.MeshLambertMaterial({ color: color });
+}
+
+function glow(color) {
+  return new THREE.MeshBasicMaterial({ color: color });
+}
+
+function box(w, h, d, mat, x, y, z) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+  m.position.set(x, y, z);
+  return m;
+}
+
+function cyl(rt, rb, h, mat, x, y, z, seg) {
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, h, seg || 12), mat);
+  m.position.set(x, y, z);
+  return m;
+}
+
+function shadowed(group) {
+  group.traverse(function (o) {
+    if (o.isMesh) {
+      o.castShadow = true;
     }
-    // Foam lapping at the sand line.
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
-    var lap = 2900 + Math.sin(time * 0.6) * 6;
-    ctx.fillRect(lap, y0, 10, y1 - y0);
-  }
+  });
+  return group;
+}
 
-  // Zebra crosswalks at every intersection inside the camera view.
-  function drawCrosswalks(ctx, cam) {
-    var roads = NB.World.roadCenters();
-    ctx.fillStyle = 'rgba(232, 227, 211, 0.75)';
-    for (var i = 0; i < roads.xs.length; i++) {
-      for (var j = 0; j < roads.ys.length; j++) {
-        var cx = roads.xs[i], cy = roads.ys[j];
-        if (cx < cam.x - 60 || cx > cam.x + C.canvasWidth + 60 ||
-            cy < cam.y - 60 || cy > cam.y + C.canvasHeight + 60) continue;
-        for (var s = -3; s <= 3; s++) {
-          ctx.fillRect(cx - 44 + s * 13, cy - 34, 7, 14);
-          ctx.fillRect(cx - 44 + s * 13, cy + 20, 7, 14);
-        }
-      }
+// Mobil komposit: bodi + kabin + 4 roda + lampu.
+// model: 'sedan' | 'taxi' | 'cruiser' | 'truck' | 'sport'
+export function buildCarMesh(model, color) {
+  const g = new THREE.Group();
+  const bodyMat = lambert(color === undefined ? 0xcccccc : color);
+  const darkMat = lambert(0x1a1d24);
+  const tyreMat = lambert(0x111111);
+  const headMat = glow(0xfff2b0);
+  const tailMat = glow(0xff2a3c);
+
+  if (model === 'truck') {
+    g.add(box(2.2, 1.6, 2.2, bodyMat, 0, 1.1, 1.6)); // kabin depan
+    g.add(box(2.4, 1.9, 3.4, lambert(0x8a8f96), 0, 1.25, -1.6)); // bak
+    g.add(box(2.0, 0.7, 1.8, darkMat, 0, 2.1, 1.6)); // kaca kabin
+  } else if (model === 'sport') {
+    g.add(box(2.0, 0.55, 4.6, bodyMat, 0, 0.55, 0)); // bodi rendah lebar
+    g.add(box(1.6, 0.45, 2.0, darkMat, 0, 1.0, -0.3)); // kabin
+    g.add(box(1.9, 0.12, 0.5, glow(0xff2d95), 0, 0.35, 2.31)); // strip neon depan
+  } else {
+    g.add(box(1.9, 0.65, 4.4, bodyMat, 0, 0.6, 0)); // bodi
+    g.add(box(1.7, 0.55, 2.2, darkMat, 0, 1.15, -0.2)); // kabin/kaca
+    if (model === 'taxi') {
+      g.add(box(1.2, 0.25, 0.6, glow(0xffe14d), 0, 1.55, -0.2)); // papan taxi
+      g.add(box(1.92, 0.18, 4.42, lambert(0x111111), 0, 0.62, 0)); // garis hitam
+    }
+    if (model === 'cruiser') {
+      g.add(box(1.92, 0.22, 1.2, lambert(0x111111), 0, 0.95, 0.6)); // kap hitam
     }
   }
 
-  // Dock containers: a small deterministic yard at the Docks (east edge,
-  // south of the pier) where the heist truck waits.
-  function dockContainers() {
-    var boxes = [];
-    var cols = ['#ff4757', '#2ed573', '#1e90ff', '#ffa502', '#a55eea'];
-    for (var r = 0; r < 3; r++) {
-      for (var c = 0; c < 4; c++) {
-        boxes.push({
-          x: 2620 + c * 62, y: 1980 + r * 46,
-          w: 54, h: 38,
-          color: cols[(r * 4 + c) % cols.length]
-        });
-      }
-    }
-    return boxes;
+  // Roda: silinder diputar supaya sumbu sejajar X.
+  const wheelGeo = new THREE.CylinderGeometry(0.36, 0.36, 0.28, 12);
+  const wheelPos = [
+    [-0.95, 0.36, 1.45], [0.95, 0.36, 1.45],
+    [-0.95, 0.36, -1.45], [0.95, 0.36, -1.45]
+  ];
+  for (let i = 0; i < wheelPos.length; i++) {
+    const w = new THREE.Mesh(wheelGeo, tyreMat);
+    w.rotation.z = Math.PI / 2;
+    w.position.set(wheelPos[i][0], wheelPos[i][1], wheelPos[i][2]);
+    g.add(w);
   }
 
-  function drawDockContainers(ctx, cam, boxes) {
-    for (var i = 0; i < boxes.length; i++) {
-      var b = boxes[i];
-      if (b.x > cam.x + C.canvasWidth + 20 || b.y > cam.y + C.canvasHeight + 20 ||
-          b.x + b.w < cam.x - 20 || b.y + b.h < cam.y - 20) continue;
-      ctx.fillStyle = 'rgba(0,0,0,0.35)';
-      ctx.fillRect(b.x + 4, b.y + 5, b.w, b.h);
-      ctx.fillStyle = b.color;
-      ctx.fillRect(b.x, b.y, b.w, b.h);
-      ctx.strokeStyle = 'rgba(255,255,255,0.35)';
-      ctx.lineWidth = 1;
-      for (var s = 1; s < 4; s++) {
-        ctx.beginPath(); ctx.moveTo(b.x + s * 13, b.y); ctx.lineTo(b.x + s * 13, b.y + b.h); ctx.stroke();
-      }
-      ctx.strokeStyle = 'rgba(255,255,255,0.5)';
-      ctx.strokeRect(b.x + 1, b.y + 1, b.w - 2, b.h - 2);
-    }
-  }
+  // Lampu depan (putih) + belakang (merah).
+  g.add(box(0.3, 0.18, 0.06, headMat, -0.6, 0.62, 2.21));
+  g.add(box(0.3, 0.18, 0.06, headMat, 0.6, 0.62, 2.21));
+  g.add(box(0.3, 0.16, 0.06, tailMat, -0.6, 0.62, -2.21));
+  g.add(box(0.3, 0.16, 0.06, tailMat, 0.6, 0.62, -2.21));
 
-  // Golden-hour vignette: warm edges, brighter heart, drawn last over the
-  // world (under the HUD) so the whole frame feels like 7pm in July.
-  function drawVignette(ctx) {
-    var g = ctx.createRadialGradient(
-      C.canvasWidth / 2, C.canvasHeight / 2, C.canvasHeight * 0.42,
-      C.canvasWidth / 2, C.canvasHeight / 2, C.canvasHeight * 0.95
-    );
-    g.addColorStop(0, 'rgba(255, 179, 71, 0)');
-    g.addColorStop(0.75, 'rgba(255, 140, 66, 0.07)');
-    g.addColorStop(1, 'rgba(40, 8, 40, 0.42)');
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, C.canvasWidth, C.canvasHeight);
-  }
+  return shadowed(g);
+}
 
-  // A street lamp with a warm pool of light, for the Strip after dark.
-  function drawStreetLamp(ctx, x, y, time) {
-    ctx.strokeStyle = '#2e2a33';
-    ctx.lineWidth = 4;
-    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y - 34); ctx.stroke();
-    ctx.fillStyle = '#ffd166';
-    ctx.beginPath(); ctx.arc(x, y - 38, 6, 0, Math.PI * 2); ctx.fill();
-    var glow = ctx.createRadialGradient(x, y - 38, 2, x, y - 38, 46);
-    glow.addColorStop(0, 'rgba(255, 209, 102, 0.30)');
-    glow.addColorStop(1, 'rgba(255, 209, 102, 0)');
-    ctx.fillStyle = glow;
-    ctx.beginPath(); ctx.arc(x, y - 38, 46, 0, Math.PI * 2); ctx.fill();
-  }
+// Pejalan kaki: silinder badan + kepala bola.
+export function buildPedMesh(color) {
+  const g = new THREE.Group();
+  const bodyMat = lambert(color === undefined ? 0x7a86ff : color);
+  const skinMat = lambert(0xe8b88a);
+  const hairMat = lambert(0x2a2018);
+  g.add(cyl(0.28, 0.34, 1.0, bodyMat, 0, 0.75, 0, 10)); // badan
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.24, 12, 10), skinMat);
+  head.position.set(0, 1.45, 0);
+  g.add(head);
+  const hair = new THREE.Mesh(new THREE.SphereGeometry(0.25, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), hairMat);
+  hair.position.set(0, 1.48, 0);
+  g.add(hair);
+  // Kaki.
+  g.add(box(0.14, 0.5, 0.14, lambert(0x222222), -0.12, 0.25, 0));
+  g.add(box(0.14, 0.5, 0.14, lambert(0x222222), 0.12, 0.25, 0));
+  return shadowed(g);
+}
 
-  NB.Visuals = {
-    drawBuilding25D: drawBuilding25D,
-    drawWaves: drawWaves,
-    drawCrosswalks: drawCrosswalks,
-    dockContainers: dockContainers,
-    drawDockContainers: drawDockContainers,
-    drawVignette: drawVignette,
-    drawStreetLamp: drawStreetLamp
-  };
-})();
+// Cruiser polisi NBPD: putih/hitam + light bar merah/biru.
+// userData.lightRedMat / lightBlueMat dipakai render.js untuk berkedip.
+export function buildPoliceMesh() {
+  const g = buildCarMesh('cruiser', 0xf2f2f2);
+  g.add(box(1.1, 0.14, 0.4, lambert(0x111111), 0, 1.5, -0.2)); // dudukan bar
+  const redMat = new THREE.MeshBasicMaterial({ color: 0xff2020 });
+  const blueMat = new THREE.MeshBasicMaterial({ color: 0x2040ff });
+  const red = box(0.5, 0.16, 0.42, redMat, -0.28, 1.62, -0.2);
+  const blue = box(0.5, 0.16, 0.42, blueMat, 0.28, 1.62, -0.2);
+  g.add(red);
+  g.add(blue);
+  g.userData.lightRedMat = redMat;
+  g.userData.lightBlueMat = blueMat;
+  return g;
+}
+
+// Helikopter: bodi + ekor + rotor (userData.rotor diputar render.js).
+export function buildHeliMesh() {
+  const g = new THREE.Group();
+  const bodyMat = lambert(0x2b3a55);
+  const darkMat = lambert(0x10131a);
+  g.add(box(2.2, 1.4, 3.4, bodyMat, 0, 0, 0)); // bodi
+  g.add(box(1.6, 0.9, 1.6, darkMat, 0, 0.2, 1.9)); // kaca depan
+  g.add(box(0.5, 0.5, 4.2, bodyMat, 0, 0.3, -3.2)); // ekor
+  g.add(box(0.3, 1.2, 0.9, lambert(0xff2d95), 0, 0.8, -5.0)); // sirip ekor
+  // Skid.
+  g.add(box(0.14, 0.14, 3.0, darkMat, -0.9, -1.0, 0));
+  g.add(box(0.14, 0.14, 3.0, darkMat, 0.9, -1.0, 0));
+  // Rotor utama.
+  const rotor = new THREE.Group();
+  rotor.position.set(0, 0.95, 0);
+  rotor.add(box(7.6, 0.08, 0.3, darkMat, 0, 0, 0));
+  rotor.add(box(0.3, 0.08, 7.6, darkMat, 0, 0, 0));
+  g.add(rotor);
+  g.userData.rotor = rotor;
+  // Lampu sorot bawah.
+  const spot = new THREE.Mesh(
+    new THREE.SphereGeometry(0.22, 8, 8),
+    new THREE.MeshBasicMaterial({ color: 0xfff6c0 })
+  );
+  spot.position.set(0, -0.85, 1.2);
+  g.add(spot);
+  return shadowed(g);
+}
+
+// Pemain: pejalan kaki oranye terang khas + topi.
+export function buildPlayerMesh() {
+  const g = buildPedMesh(0xff7a1a);
+  g.add(cyl(0.26, 0.26, 0.1, lambert(0x111111), 0, 1.66, 0, 10)); // topi
+  g.add(box(0.3, 0.05, 0.22, lambert(0x111111), 0, 1.62, 0.24)); // lidah topi
+  return g;
+}
+
+// Prop generik: barrier / crate oranye untuk misi.
+export function buildPropMesh() {
+  const g = new THREE.Group();
+  g.add(box(1.6, 0.9, 0.5, lambert(0xff7a1a), 0, 0.45, 0));
+  g.add(box(1.6, 0.18, 0.52, glow(0xffffff), 0, 0.62, 0));
+  g.add(box(0.18, 0.9, 0.6, lambert(0x333333), -0.6, 0.45, 0));
+  g.add(box(0.18, 0.9, 0.6, lambert(0x333333), 0.6, 0.45, 0));
+  return shadowed(g);
+}
+
+export const Visuals = {
+  buildCarMesh: buildCarMesh,
+  buildPedMesh: buildPedMesh,
+  buildPoliceMesh: buildPoliceMesh,
+  buildHeliMesh: buildHeliMesh,
+  buildPlayerMesh: buildPlayerMesh,
+  buildPropMesh: buildPropMesh
+};

@@ -1,41 +1,45 @@
-// Neon Bay: Sunset Run — entry program for make.fun gta6-01.
-// Copies game/ and screenshots/ from this repository into the output
-// directory and writes dossier.json with the kit's buildDossier library.
-// Node 22 standard library only; no network, no install step.
-import { buildDossier } from './vendor/makefun-game.ts';
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+// main.ts — entrypoint build dossier NEON BAY 3D (gta6-01 ronde 5).
+// Node 22 stdlib only, erasable TypeScript: jalan langsung `node main.ts`
+// tanpa flag, tanpa build, tanpa install.
+//
+//   MAKEFUN_OUTPUT_DIR=out node main.ts
+//
+// Membaca game/ + screenshots/ dari repo, menyalinnya ke dir output,
+// lalu menulis dossier.json memakai buildDossier dari kit make.fun
+// (./vendor/makefun-game.ts — file kit, jangan diubah).
+
+import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { buildDossier } from './vendor/makefun-game.ts';
 
-const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)));
-const outputDir = process.env.MAKEFUN_OUTPUT_DIR
-  ? resolve(process.env.MAKEFUN_OUTPUT_DIR)
-  : '/output';
+const repoDir = resolve(dirname(fileURLToPath(import.meta.url)));
+const outputDir = resolve(process.env.MAKEFUN_OUTPUT_DIR || '/output');
 
-// Remove only the CONTENTS of dir, never dir itself. In the grader sandbox
-// /output is a bind mount: rmdir on a mount point fails EBUSY, so a recursive
-// rm of the directory itself would abort the whole run. A child that cannot
-// be removed must not fail the run either.
-function clearDir(dir: string): void {
-  if (!existsSync(dir)) return;
+// Kosongkan HANYA ISI dir output — jangan pernah hapus dir itu sendiri.
+// Di sandbox grader /output adalah mount point: rmdir gagal EBUSY.
+function clearDirContents(dir: string): void {
   for (const entry of readdirSync(dir)) {
-    try {
-      rmSync(join(dir, entry), { recursive: true, force: true });
-    } catch {
-      // best effort: stale content must never fail the run
-    }
+    rmSync(join(dir, entry), { recursive: true, force: true });
   }
 }
 
 function main(): void {
-  const gameDir = join(repoRoot, 'game');
-  const shotsDir = join(repoRoot, 'screenshots');
-  if (!existsSync(gameDir)) throw new Error('game/ is missing from the repository');
-  if (!existsSync(join(gameDir, 'index.html'))) throw new Error('game/index.html is missing');
-  if (!existsSync(shotsDir)) throw new Error('screenshots/ is missing from the repository');
+  const gameDir = join(repoDir, 'game');
+  const shotsDir = join(repoDir, 'screenshots');
 
-  clearDir(outputDir);
+  if (!existsSync(gameDir) || !statSync(gameDir).isDirectory()) {
+    throw new Error('main.ts: game/ hilang di repo — tidak ada yang bisa di-build');
+  }
+  if (!existsSync(join(gameDir, 'index.html'))) {
+    throw new Error('main.ts: game/index.html hilang');
+  }
+  if (!existsSync(shotsDir) || !statSync(shotsDir).isDirectory()) {
+    throw new Error('main.ts: screenshots/ hilang di repo — ambil screenshot dulu (tools/shot.mjs)');
+  }
+
   mkdirSync(outputDir, { recursive: true });
+  clearDirContents(outputDir);
   cpSync(gameDir, join(outputDir, 'game'), { recursive: true });
   cpSync(shotsDir, join(outputDir, 'screenshots'), { recursive: true });
 
@@ -44,10 +48,9 @@ function main(): void {
     screenshots: { max: 4, max_bytes: 262144 },
     game_max_files: 993,
     game_max_bytes: 50331648,
-    game_path_max_bytes: 1000
   });
   writeFileSync(join(outputDir, 'dossier.json'), dossier);
-  console.log(`Neon Bay: Sunset Run — wrote ${outputDir} (dossier ${dossier.length} bytes)`);
+  console.log(`main.ts: dossier.json ${dossier.length} bytes -> ${join(outputDir, 'dossier.json')}`);
 }
 
 main();
