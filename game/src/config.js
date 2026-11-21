@@ -169,6 +169,16 @@
       wantedOnStart: 2,
       kind: 'takedown',
       killsNeeded: 5
+    },
+    {
+      id: 'kingpin',
+      title: 'MISSION 7 — KINGPIN\'S LAST RUN',
+      brief: 'The heist cash is in the truck. Haul it across the city to the boat at the Pier under a five-star tail — AIR-1 and roadblocks included. Don\'t stop.',
+      target: { x: 2900, y: 200 },
+      timeLimit: 120,
+      reward: 5000,
+      wantedOnStart: 5,
+      kind: 'heist'
     }
   ];
 

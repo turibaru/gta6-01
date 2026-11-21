@@ -31,6 +31,10 @@
       cleanhouse: [
         ['mira', 'Five Coral runners on our turf. Send them home, one by one.'],
         ['marco', 'They brought bats. You brought a Scattergun. Fair trade.']
+      ],
+      kingpin: [
+        ['mira', 'Last run, courier. The truck, the Pier, five stars — bring it home.'],
+        ['marco', 'AIR-1, roadblocks, the whole department. Drive like the sunset depends on it.']
       ]
     },
     done: {
@@ -39,7 +43,8 @@
       escape: [['mira', 'Clean getaway. The PD is still circling the arcade.']],
       grandprix: [['vega', '...Fine. You\'re fast. Rematch at midnight — bring the same nerve.']],
       heist: [['mira', 'The truck is ours. Rico is already counting it. Twice.']],
-      cleanhouse: [['marco', 'Five down, turf secure. The Strip is ours again tonight.']]
+      cleanhouse: [['marco', 'Five down, turf secure. The Strip is ours again tonight.']],
+      kingpin: [['mira', 'The boat is gone and the cash is ours. Rico says you\'re a legend now.']]
     }
   };
 
@@ -85,7 +90,10 @@
         var crew = NB.Crew[this.who];
         if (!crew) return;
         var bw = 620, bh = 92;
-        var bx = (C.canvasWidth - bw) / 2, by = C.canvasHeight - 168;
+        // Round 4 fix: left-aligned under the cash box. Centred, the card
+        // (x 170..790) covered the vehicle panel (x 646..946, y 428..474)
+        // and weapon slot 1 (y 482..528); at x 12..632 it clears both.
+        var bx = 12, by = C.canvasHeight - 168;
         ctx.fillStyle = 'rgba(12,8,24,0.88)';
         ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 10); ctx.fill();
         ctx.strokeStyle = crew.color;

@@ -272,11 +272,45 @@
     ctx.strokeStyle = '#ffffff';
     ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.arc(mx + state.player.x * sx, my + state.player.y * sy, 6, 0, Math.PI * 2); ctx.stroke();
+    // Round 4: neon radar extras — range rings, sweep, heli, roadblocks, garage.
+    drawRadarExtras(ctx, state, mx, my, mw, mh, sx, sy);
     ctx.restore();
     ctx.fillStyle = C.colors.hudText;
     ctx.font = 'bold 11px sans-serif';
     ctx.textAlign = 'left';
-    ctx.fillText('NEON BAY', mx, my + mh + 16);
+    ctx.fillText('NEON RADAR', mx, my + mh + 16);
+  }
+
+  // Round 4: neon radar layer inside the minimap clip — range rings and
+  // a rotating sweep around the player, plus heli, roadblock and garage
+  // markers and the current district name.
+  function drawRadarExtras(ctx, state, mx, my, mw, mh, sx, sy) {
+    var px = mx + state.player.x * sx, py = my + state.player.y * sy;
+    ctx.strokeStyle = 'rgba(34,211,238,0.35)';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(px, py, 22, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(px, py, 44, 0, Math.PI * 2); ctx.stroke();
+    var sa = state.time * 0.7;
+    ctx.strokeStyle = 'rgba(34,211,238,0.7)';
+    ctx.beginPath(); ctx.moveTo(px, py);
+    ctx.lineTo(px + Math.cos(sa) * 44, py + Math.sin(sa) * 44); ctx.stroke();
+    if (state.heli && state.heli.active && Math.sin(state.time * 6) > 0) {
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath(); ctx.arc(mx + state.heli.x * sx, my + state.heli.y * sy, 4, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.fillStyle = '#ff8c42';
+    for (var i = 0; i < state.roadblocks.length; i++) {
+      var b = state.roadblocks[i];
+      ctx.fillRect(mx + b.x * sx - 3, my + b.y * sy - 3, 6, 6);
+    }
+    ctx.fillStyle = '#2ed573';
+    ctx.font = 'bold 11px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('G', mx + C.garage.x * sx, my + C.garage.y * sy + 4);
+    ctx.fillStyle = '#fff3e0';
+    ctx.font = 'bold 10px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(NB.World.districtAt(state.player.x, state.player.y).toUpperCase(), mx + 6, my + mh - 6);
   }
 
   function drawBullets(ctx, bullets) {
@@ -353,6 +387,97 @@
     ctx.fillText(label, C.canvasWidth / 2, 32);
   }
 
+  // Round 4 vehicle condition panel, above the weapon wheel: ENGINE /
+  // BODY bar coloured by car health, with a live percentage. Only
+  // shown while the player is driving.
+  function drawVehiclePanel(ctx, state) {
+    if (!state.player.inCar || !state.player.car) return;
+    var car = state.player.car;
+    var maxHp = car.maxHealth || 100;
+    var pct = Math.max(0, Math.round(car.health / maxHp * 100));
+    var x = C.canvasWidth - 314, y = C.canvasHeight - 172;
+    ctx.fillStyle = C.colors.hudBg;
+    ctx.beginPath(); ctx.roundRect(x, y, 300, 46, 8); ctx.fill();
+    ctx.fillStyle = C.colors.hudText;
+    ctx.font = 'bold 12px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText('ENGINE', x + 12, y + 17);
+    ctx.fillStyle = '#333';
+    ctx.fillRect(x + 78, y + 7, 150, 12);
+    ctx.fillStyle = pct > 60 ? '#2ed573' : pct >= 30 ? '#ffa502' : '#ff4757';
+    ctx.fillRect(x + 78, y + 7, 150 * pct / 100, 12);
+    ctx.fillStyle = '#ffd166';
+    ctx.font = 'bold 12px sans-serif';
+    ctx.fillText(pct + '%', x + 236, y + 17);
+    ctx.fillStyle = C.colors.hudText;
+    ctx.font = '11px sans-serif';
+    ctx.fillText('BODY ' + pct + '%  •  press G at the garage to repair', x + 12, y + 36);
+  }
+
+  // Round 4: wrap a long line into the card width, returning the lines.
+  function wrapCardLines(ctx, text, maxW) {
+    var words = text.split(' ');
+    var lines = [];
+    var line = '';
+    for (var i = 0; i < words.length; i++) {
+      var test = line ? line + ' ' + words[i] : words[i];
+      if (ctx.measureText(test).width > maxW && line) {
+        lines.push(line);
+        line = words[i];
+      } else {
+        line = test;
+      }
+    }
+    if (line) lines.push(line);
+    return lines;
+  }
+
+  // Round 4 mission briefing card, shown while a job waits in the
+  // brief phase: crew portrait, quote, objective, reward, ENTER hint.
+  function drawBriefingCard(ctx, state) {
+    var m = state.missions.current();
+    var brief = NB.Briefing && NB.Briefing[m.id];
+    if (!brief) return;
+    var crew = NB.Crew[brief.crew];
+    if (!crew) return;
+    var bw = 560, bh = 208;
+    var bx = (C.canvasWidth - bw) / 2, by = 158;
+    ctx.fillStyle = 'rgba(12,8,24,0.92)';
+    ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 12); ctx.fill();
+    ctx.strokeStyle = crew.color;
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 12); ctx.stroke();
+    ctx.fillStyle = crew.color;
+    ctx.beginPath(); ctx.arc(bx + 48, by + 48, 30, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#160a26';
+    ctx.font = 'bold 30px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(crew.initial, bx + 48, by + 59);
+    ctx.fillStyle = crew.color;
+    ctx.font = 'bold 15px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(crew.name + '  •  ' + crew.role.toUpperCase(), bx + 90, by + 36);
+    ctx.fillStyle = '#fff3e0';
+    ctx.font = 'italic 14px sans-serif';
+    ctx.fillText('"' + brief.quote + '"', bx + 90, by + 58);
+    ctx.fillStyle = C.colors.hudAccent;
+    ctx.font = 'bold 17px sans-serif';
+    ctx.fillText(m.title, bx + 24, by + 104);
+    ctx.fillStyle = '#fff3e0';
+    ctx.font = '13px sans-serif';
+    var objLines = wrapCardLines(ctx, m.brief, bw - 48);
+    for (var l = 0; l < objLines.length && l < 2; l++) {
+      ctx.fillText(objLines[l], bx + 24, by + 126 + l * 17);
+    }
+    ctx.fillStyle = '#2ed573';
+    ctx.font = 'bold 14px sans-serif';
+    ctx.fillText('REWARD  $' + m.reward + '  (+ time bonus)', bx + 24, by + 168);
+    ctx.fillStyle = Math.sin(state.time * 5) > 0 ? '#ffd166' : '#fff3e0';
+    ctx.font = 'bold 15px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('ENTER  —  START JOB', C.canvasWidth / 2, by + bh - 14);
+  }
+
   function drawHud(ctx, state) {
     ctx.textAlign = 'left';
     // Top-left: cash, score, district.
@@ -403,9 +528,12 @@
       ctx.fillText('CONDITION ' + Math.max(0, Math.round(state.player.car.health / maxHp * 100)) + '%', 24, C.canvasHeight - 66);
     }
     // Bottom-center: mission banner.
+    // Round 4 fix: 420 wide (x 270..690), not 460 — the old right edge
+    // (710) sat under the controls hint's third line, which starts at
+    // x 696; 690 clears it.
     var m = state.missions.current();
     ctx.fillStyle = C.colors.hudBg;
-    var bw = 460;
+    var bw = 420;
     ctx.beginPath(); ctx.roundRect((C.canvasWidth - bw) / 2, C.canvasHeight - 58, bw, 46, 8); ctx.fill();
     ctx.fillStyle = C.colors.hudAccent;
     ctx.font = 'bold 13px sans-serif';
@@ -434,16 +562,25 @@
       ctx.fillText(state.missions.message, C.canvasWidth / 2, 177);
     }
     // Controls hint, bottom-right.
+    // Round 4 fix: baselines 6px lower (H-60/H-44/H-28). The first line's
+    // glyph tops (~525) grazed the weapon wheel's bottom edge (528).
     ctx.textAlign = 'right';
     ctx.fillStyle = 'rgba(255,243,224,0.85)';
     ctx.font = '12px sans-serif';
-    ctx.fillText('WASD drive / walk  •  E enter car  •  SPACE brake', C.canvasWidth - 14, C.canvasHeight - 66);
-    ctx.fillText('P pause  •  M mute  •  ENTER start job', C.canvasWidth - 14, C.canvasHeight - 50);
-    ctx.fillText('1-4 weapons  •  F shoot  •  G garage  •  R radio', C.canvasWidth - 14, C.canvasHeight - 34);
+    ctx.fillText('WASD drive / walk  •  E enter car  •  SPACE brake', C.canvasWidth - 14, C.canvasHeight - 60);
+    ctx.fillText('P pause  •  M mute  •  ENTER start job', C.canvasWidth - 14, C.canvasHeight - 44);
+    ctx.fillText('1-4 weapons  •  F shoot  •  G garage  •  R radio', C.canvasWidth - 14, C.canvasHeight - 28);
     // Round 3 HUD panels.
     drawWeaponWheel(ctx, state);
+    // Round 4: vehicle condition panel above the weapon wheel.
+    drawVehiclePanel(ctx, state);
     drawRespectBar(ctx, state);
     drawRadioBadge(ctx, state);
+    // Round 4: objective banner, wanted stars, alerts, edge arrow.
+    NB.Beacon.drawObjectiveBanner(ctx, state);
+    NB.Wanted.drawStars(ctx, state);
+    NB.Wanted.drawAlert(ctx, state);
+    NB.Beacon.drawEdgeArrow(ctx, state);
     drawMinimap(ctx, state);
   }
 
@@ -491,7 +628,7 @@
     ctx.fillText('Press ENTER or click START — best haul so far: $' + state.bestCash, C.canvasWidth / 2, 548);
     ctx.fillStyle = '#22d3ee';
     ctx.font = '14px sans-serif';
-    ctx.fillText('6 jobs  •  weapon wheel (1-4, F to shoot)  •  garage (G)  •  radio (R)  •  respect ranks  •  AIR-1', C.canvasWidth / 2, 572);
+    ctx.fillText('7 jobs  •  weapon wheel (1-4, F to shoot)  •  garage (G)  •  radio (R)  •  respect ranks  •  AIR-1  •  neon radar', C.canvasWidth / 2, 572);
     // Start button.
     state.startButton = { x: C.canvasWidth / 2 - 90, y: 380, w: 180, h: 44 };
     ctx.fillStyle = '#ff2e88';
@@ -542,6 +679,7 @@
     drawParticles: drawParticles,
     drawBullets: drawBullets,
     drawHud: drawHud,
+    drawBriefingCard: drawBriefingCard,
     drawStartScreen: drawStartScreen,
     drawGameOver: drawGameOver,
     drawPaused: drawPaused

@@ -94,7 +94,11 @@
       bestCash: save.bestCash,
       bestScore: save.bestScore,
       startButton: null,
-      shot: null
+      shot: null,
+      // Round 4: spawn grace countdown (seconds left of damage immunity
+      // after a job starts) and the wanted-star alert tracker.
+      grace: 0,
+      wantedFx: NB.Wanted.createWanted()
     };
     state.missions.showMessage('Welcome to Neon Bay. Press ENTER to start.', 999);
     return state;
@@ -214,6 +218,9 @@
   function updateCollisions(state, dt) {
     var p = state.player;
     var pr = p.inCar ? 24 : C.player.radius;
+    // Round 4: during spawn grace the player takes no damage at all —
+    // bumps still shove cars apart, but health never drops.
+    var graceOn = state.grace > 0;
     // Traffic bumps.
     var allCars = state.traffic.concat(state.police);
     for (var i = 0; i < allCars.length; i++) {
@@ -236,7 +243,7 @@
           c.speed *= 0.4;
           if (!c._bumpCd || c._bumpCd <= 0) {
             c._bumpCd = 0.6;
-            p.car.health -= 4;
+            if (!graceOn) p.car.health -= 4;
             state.audio.crash();
             state.particles.burst(p.x, p.y, '#ffa502', 10, 150);
             if (Math.random() < 0.35) raiseWanted(state, 1, 'You smashed into traffic!');
@@ -244,7 +251,7 @@
           if (p.car.health <= 0) { gameOver(state, false); return; }
         } else {
           p.x += dx; p.y += dy;
-          p.health -= 2;
+          if (!graceOn) p.health -= 2;
           if (p.health <= 0) { gameOver(state, false); return; }
         }
       }
@@ -272,10 +279,10 @@
       var cd2 = dist2(p, cop);
       if (cd2 < 30 * 30) {
         if (p.inCar) {
-          p.car.health -= 8 * dt * 10;
+          if (!graceOn) p.car.health -= 8 * dt * 10;
           cop.speed *= 0.6;
           if (p.car.health <= 0) { gameOver(state, false); return; }
-        } else {
+        } else if (!graceOn) {
           gameOver(state, true);
           return;
         }
@@ -341,6 +348,18 @@
       state.dialog.update(dt, state);
       return;
     }
+    // Round 4: showcase freeze — while a ?shot= preset is staged, the
+    // city holds still so the captured frame matches the setup. The
+    // game clock keeps ticking (blink and pulse effects), the radio
+    // keeps playing and dialogue keeps advancing; everything hostile
+    // waits: no driving, no chases, no bullets, no mission timer.
+    if (state.shot) {
+      state.radio.update(state, dt);
+      state.dialog.update(dt, state);
+      return;
+    }
+    // Round 4: spawn grace counts down in normal play.
+    if (state.grace > 0) state.grace -= dt;
     updatePlayer(state, dt);
     if (state.screen !== 'play') return;
     NB.Entities.updateTraffic(state.traffic, dt, state.city, state.player.inCar ? state.player.car : null);
@@ -359,6 +378,8 @@
     updateCollisions(state, dt);
     if (state.screen !== 'play') return;
     updateWanted(state, dt);
+    // Round 4: wanted-star alerts (HEAT RISING / ROADBLOCK / AIR-1).
+    NB.Wanted.update(state.wantedFx, state, dt);
     state.missions.update(dt, state);
     if (state.missions.phase === 'active' && state.missions.checkProgress(state)) {
       state.missions.complete(state);
@@ -408,6 +429,8 @@
     ctx.translate(-Math.round(state.cam.x), -Math.round(state.cam.y));
     NB.Render.drawGround(ctx, state.cam, state.city, state.time);
     NB.Render.drawCityProps(ctx, state.cam, state.city);
+    // Round 4: named shop signs, pier string lights, landmark palms.
+    NB.Dressing.draw(ctx, state.cam, state.time);
     NB.Garage.drawGarageMarker(ctx, state, state.time);
     if (state.missions.phase === 'active') {
       NB.Render.drawMarker(ctx, state.missions.current().target, state.time);
@@ -430,11 +453,15 @@
     NB.Render.drawParticles(ctx, state.particles);
     for (i = 0; i < state.roadblocks.length; i++) NB.Heat.drawRoadblock(ctx, state.roadblocks[i]);
     NB.Heat.drawHeli(ctx, state.heli, state.time);
+    // Round 4: pulsing mission beacon over the active job target.
+    NB.Beacon.drawBeacon(ctx, state);
     if (state.rival) NB.Rivals.drawRival(ctx, state.rival);
     ctx.restore();
     // Round 3: golden-hour vignette over the world, under the HUD.
     NB.Visuals.drawVignette(ctx);
     NB.Render.drawHud(ctx, state);
+    // Round 4: mission briefing card while a job waits to start.
+    if (state.screen === 'play' && state.missions.phase === 'brief') NB.Render.drawBriefingCard(ctx, state);
     state.dialog.draw(ctx, state);
     if (state.garage.open) NB.Garage.drawGaragePanel(ctx, state);
     if (state.screen === 'paused') NB.Render.drawPaused(ctx);

@@ -12,25 +12,25 @@
         name: 'start',
         file: '1-start.jpg',
         shot: 'start',
-        caption: 'Neon Bay at sunset — driving the Strip with the mission marker ahead, traffic closing in.'
+        caption: 'Neon Bay at sunset — driving the Strip past DONUT PALACE and TATTOO VICE, the neon radar tracking the pink mission beacon ahead.'
       },
       {
         name: 'drive',
         file: '2-drive.jpg',
         shot: 'drive',
-        caption: 'Cruising Neon Bay traffic with pedestrians, neon signs and the HUD live.'
+        caption: 'Cruising Neon Bay traffic with the neon radar, the pulsing mission beacon and the objective banner live in the HUD.'
       },
       {
         name: 'chase',
         file: '3-chase.jpg',
         shot: 'chase',
-        caption: 'Four-star wanted level — AIR-1 overhead, a roadblock ahead, Bay PD cruisers in a fan.'
+        caption: 'Four-star wanted level — five wanted stars lit under the objective banner, AIR-1 overhead, a roadblock ahead, Bay PD cruisers in a fan.'
       },
       {
         name: 'mission',
         file: '4-mission.jpg',
         shot: 'mission',
-        caption: 'Mission 6 shootout — scattergun out, Coral runners closing in, tracers in the air.'
+        caption: 'Mission 6 shootout — scattergun out, Coral runners closing in, tracers in the air, wanted stars climbing on the neon radar.'
       }
     ]
   };

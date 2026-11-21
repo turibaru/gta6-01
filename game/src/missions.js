@@ -34,6 +34,11 @@
         this.kills = 0;
         var m = this.current();
         this.timeLeft = m.timeLimit;
+        // Round 4: 8-second spawn grace — no damage from police or
+        // runners while the job gets going, and a full wanted timer
+        // so a five-star start does not decay on the first frame.
+        state.grace = 8;
+        state.wantedTimer = NB.Config.wantedDecaySeconds;
         if (m.wantedOnStart > state.wanted) state.wanted = m.wantedOnStart;
         if (m.kind === 'race') state.rival = NB.Rivals.createRival(state);
         if (m.kind === 'takedown') state.runners = NB.Rivals.spawnRunners(state, Math.random);
@@ -113,6 +118,18 @@
       }
     };
   }
+
+  // Round 4 briefing cards: who hands you each job and what they say.
+  // The card itself is drawn by NB.Render.drawBriefingCard.
+  NB.Briefing = {
+    pickup: { crew: 'mira', quote: 'Rico\'s package is at the pier. Quick hands, quiet feet.' },
+    delivery: { crew: 'marco', quote: 'Marina Hotel, no stops. The meter is running.' },
+    escape: { crew: 'mira', quote: 'Three stars and counting. The arcade hideout is your only friend tonight.' },
+    grandprix: { crew: 'vega', quote: 'You wanted a race? Four checkpoints. Don\'t embarrass yourself.' },
+    heist: { crew: 'mira', quote: 'A money truck, parked and dreaming. Wake it up gently.' },
+    cleanhouse: { crew: 'marco', quote: 'Five Coral runners on our turf. Send them all home.' },
+    kingpin: { crew: 'mira', quote: 'Everything we built rides in that truck. Five stars, one pier — go.' }
+  };
 
   NB.createMissions = createMissions;
 })();

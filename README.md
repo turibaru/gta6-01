@@ -4,11 +4,11 @@
 [![rank](https://make.fun/badge/gta6-01/turibaru/gta6-01/rank.svg)](https://make.fun/bounty/gta6-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 [![reward](https://make.fun/badge/gta6-01/turibaru/gta6-01/reward.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 
-# NEON BAY: SUNSET RUN — open-world crime in a sunset beach city: 6 story jobs, NBPD dispatch with roadblocks and air support, weapon wheel, garage upgrades, respect ranks, radio & saves
+# NEON BAY: SUNSET RUN — open-world crime in a sunset beach city: 7 story jobs, neon radar + mission beacons, NBPD heat with roadblocks and air support, weapon wheel, garage upgrades, respect ranks, radio & saves
 
 An original open-world sunset crime game for the **make.fun "Make GTA 6" (gta6-01)** bounty — built from scratch in recorded sessions, with no assets, names, or code taken from any commercial game.
 
-You are a courier in **Neon Bay**, a sun-soaked coastal city of palm-lined boulevards, neon signs, a pier, a marina, dockyards, and an old arcade. Explore the city **on foot and by car**, steal cars, dodge traffic and pedestrians, outrun the **Bay PD** as your wanted level climbs, and run **Rico's six-job story chain** across the map — from a sunset pickup at the pier to a street race against Vega, a harbor heist, and a turf war with the Coral crew.
+You are a courier in **Neon Bay**, a sun-soaked coastal city of palm-lined boulevards, neon signs, a pier, a marina, dockyards, and an old arcade. Explore the city **on foot and by car**, steal cars, dodge traffic and pedestrians, outrun the **Bay PD** as your wanted level climbs, and run **Rico's seven-job story chain** across the map — from a sunset pickup at the pier to a street race against Vega, a harbor heist, a turf war with the Coral crew, and a five-star finale run to the Pier.
 
 ## How to play
 
@@ -32,7 +32,13 @@ Open `game/index.html` in desktop Chrome (or run `node serve.ts` and visit http:
 ## What's in the game
 
 - **Open city** — a 3200×2400 road grid with six districts (Neon Strip, Marina, The Pier, Palm Heights, Bayfront, Old Arcade), 2.5D buildings with sunset side faces and long shadows, lit windows, neon signs, street lamps, palm trees, zebra crosswalks, dock containers, animated surf on the beach, and a golden-hour vignette.
-- **Six story jobs** — a sunset pickup at the pier, a timed delivery dash to the Marina Hotel, a three-star escape to the old arcade hideout, the **Sunset Grand Prix** (a 4-checkpoint street race against rival Vega), the **Harbor Heist** (steal a money truck at the Docks and shake a three-star tail), and **Clean House** (take down five Coral runners). Completing jobs pays cash with a time bonus.
+- **Seven story jobs** — a sunset pickup at the pier, a timed delivery dash to the Marina Hotel, a three-star escape to the old arcade hideout, the **Sunset Grand Prix** (a 4-checkpoint street race against rival Vega), the **Harbor Heist** (steal a money truck at the Docks and shake a three-star tail), **Clean House** (take down five Coral runners), and the finale **Kingpin's Last Run** (haul the heist cash to the Pier boat under a five-star tail with AIR-1 and roadblocks). Completing jobs pays cash with a time bonus.
+- **Neon radar** — the minimap is now a radar: range rings and a rotating sweep around the player, a blinking white AIR-1 dot, orange roadblock squares, a green garage marker, and the district name you are driving through.
+- **Mission beacon + objective HUD** — a pulsing pink beacon with a light pillar marks the active job target in the world, an edge arrow with a metre distance points at it when it is off-camera, and a banner under the radio badge names the job and its remaining seconds.
+- **Wanted stars + police alerts** — five gold stars sit centre-top under the objective banner (blinking at four and five stars), and a big banner calls out the new threat when the heat climbs: HEAT RISING, ROADBLOCK AHEAD, or AIR-1 OVERHEAD.
+- **Street dressing** — named shop signs (DONUT PALACE, TATTOO VICE, ARCADE 84, MARINA HOTEL, PIER CAFE), twinkling string lights along the pier, and extra palms and street lamps around the garage, marina, and old arcade.
+- **Vehicle condition HUD** — an ENGINE / BODY panel above the weapon wheel with a colour-coded health bar and live percentage while driving (green >60, amber 30–60, red <30).
+- **Mission briefing cards** — before each job starts, a card shows the crew member handing you the job, their quote, the objective, and the reward. Press ENTER to start.
 - **NBPD dispatch** — hit a pedestrian, smash traffic, speed past a patrol, or steal a car in daylight and the stars climb. From three stars the department drops **roadblocks** on the road ahead (ram them or shoot them to smash through); from four stars **AIR-1**, the police helicopter, shadows you with a sweeping searchlight.
 - **Weapon wheel** — Pistol (unlimited ammo), Scattergun (5-pellet spread, 24 shells), SMG (rapid fire, 120 rounds), and Fists for close work. Ammo counts live in the HUD; bullets can drop cruisers, runners, and roadblocks — and clip Vega's race car.
 - **Garage upgrades** — park at the safehouse garage and spend cash on a full repair ($100), plated armor (+50 max health, $500), a tuned engine (+60 top speed, $800), or a fresh sunset repaint ($150).
@@ -40,7 +46,7 @@ Open `game/index.html` in desktop Chrome (or run `node serve.ts` and visit http:
 - **Radio** — three synthwave stations (NEON 99.1, OMBO 98.4, VICE FM), each with its own key, tempo, and bass line, synthesized live in WebAudio. Press R to flip stations.
 - **Crew dialogue** — Marco, Mira, and Vega talk to you in portrait dialogue boxes when jobs start and finish.
 - **Traffic and pedestrians** — 14 traffic cars driving the grid and 26 pedestrians wandering the sidewalks, plus Vega's rival racer and the five Coral runners.
-- **HUD with minimap** — cash, score, best haul, wanted stars, AIR-1 warning, car condition %, speed, weapon wheel with ammo, respect bar, radio badge, race checkpoint counter, mission banner with timer, and a live minimap showing the player, police, and the mission marker.
+- **HUD with neon radar** — cash, score, best haul, wanted stars, AIR-1 warning, car condition %, speed, weapon wheel with ammo, respect bar, radio badge, race checkpoint counter, mission banner with timer, objective banner with job title, police alert banners, and a live neon radar showing the player, police, heli, roadblocks, garage, and the mission marker.
 - **Sound and save** — synthesized engine hum, sirens, gunshots, and pickup chimes (WebAudio, no audio files); your best haul and jobs persist in the browser.
 
 ## Screenshots
@@ -65,6 +71,9 @@ game/
   src/radio.js        three synthwave station sequencers
   src/dialog.js       crew dialogue boxes with portraits
   src/rivals.js       Vega's race car and the Coral runners
+  src/beacon.js       mission beacon, edge arrow, objective banner
+  src/wanted.js       wanted stars and police alert banners
+  src/dressing.js     named shop signs, pier string lights, landmark palms
   src/visuals.js      2.5D buildings, waves, crosswalks, docks, vignette
   src/render.js       city, cars, HUD, minimap, menus
   src/shots.js        screenshot scene catalogue
