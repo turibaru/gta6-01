@@ -23,6 +23,7 @@ let beacon = null;
 let clock = null;
 let heliMesh = null;
 let heliVisible = false;
+let heliAlt = 34; // ketinggian heli; preset chase menurunkannya agar masuk frame
 
 const entityMeshes = new Map(); // id -> { group, kind }
 const flashes = []; // { sprite, life }
@@ -216,11 +217,12 @@ function setBeacon(x, z, visible) {
   if (beacon) beacon.set(x, z, visible);
 }
 
-function setHeli(x, z, visible) {
+function setHeli(x, z, visible, alt) {
   heliVisible = !!visible;
+  if (typeof alt === 'number') heliAlt = alt;
   if (heliMesh) {
     heliMesh.visible = heliVisible;
-    if (heliVisible) heliMesh.position.set(x, 34, z);
+    if (heliVisible) heliMesh.position.set(x, heliAlt, z);
   }
 }
 
@@ -247,7 +249,7 @@ function render() {
 
   if (heliMesh && heliMesh.visible && heliMesh.userData.rotor) {
     heliMesh.userData.rotor.rotation.y += dt * 30;
-    heliMesh.position.y = 34 + Math.sin(t * 1.5) * 0.8; // melayang naik-turun
+    heliMesh.position.y = heliAlt + Math.sin(t * 1.5) * 0.8; // melayang naik-turun
   }
   // Rotor heli entity dari syncEntities.
   entityMeshes.forEach(function (rec) {

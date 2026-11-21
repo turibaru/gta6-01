@@ -120,6 +120,28 @@ function addBuilding(scene, rng, cx, cz, w, d, h, district) {
       scene.add(vSign);
     }
   }
+  // Neon etalase di lantai dasar (y ~3,2 m) di kedua fasad: terbaca dari
+  // kamera chase yang rendah. Neon lama di h*0,82 jatuh DI ATAS frame
+  // untuk gedung dekat yang tinggi, sehingga jalanan tampak polos.
+  // Warna dari hash posisi (cx,cz) — TIDAK memakai rng() supaya urutan
+  // RNG kota (tinggi gedung, palem, skyline) tidak berubah.
+  if (district === 'strip' || district === 'arcade') {
+    const hsh = Math.abs(Math.sin(cx * 12.9898 + cz * 78.233) * 43758.5453) % 1;
+    const bw = Math.min(w * 0.6, 8);
+    const barS = new THREE.Mesh(
+      new THREE.BoxGeometry(bw, 0.8, 0.25),
+      new THREE.MeshBasicMaterial({ color: NEON[Math.floor(hsh * NEON.length)] })
+    );
+    barS.position.set(cx, 3.2, cz + d / 2 + 0.15);
+    scene.add(barS);
+    const hsh2 = Math.abs(Math.sin(cx * 39.346 + cz * 11.135) * 24634.6345) % 1;
+    const barN = new THREE.Mesh(
+      new THREE.BoxGeometry(bw, 0.8, 0.25),
+      new THREE.MeshBasicMaterial({ color: NEON[Math.floor(hsh2 * NEON.length)] })
+    );
+    barN.position.set(cx, 3.2, cz - d / 2 - 0.15);
+    scene.add(barN);
+  }
   // Antena di gedung tinggi Downtown.
   if (district === 'downtown' && h > 35) {
     const ant = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.3, 8, 6), lambert(0x333333));

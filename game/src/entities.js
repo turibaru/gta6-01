@@ -85,7 +85,7 @@ export class Entities {
     this.traffic = [];
     this.peds = [];
     this.police = [];
-    this.heli = { x: 0, z: 0, visible: false, heading: 0 };
+    this.heli = { x: 0, z: 0, visible: false, heading: 0, alt: 34 };
     this.roadblocks = [];
     this._roadblockTimer = 0;
     this.reset();

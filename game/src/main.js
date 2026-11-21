@@ -518,7 +518,7 @@ export class Game {
       if (beacon) this.beacon = { x: beacon.x, z: beacon.z, visible: beaconVisible };
       try { Render.setBeacon(this.beacon.x, this.beacon.z, this.beacon.visible); } catch (err) {}
     }
-    try { Render.setHeli(e.heli.x, e.heli.z, e.heli.visible); } catch (err) {}
+    try { Render.setHeli(e.heli.x, e.heli.z, e.heli.visible, e.heli.alt); } catch (err) {}
     const list = [...e.toSyncList(), ...this.rivals.toSyncList()];
     try { Render.syncEntities(list); } catch (err) {}
     // Satu frame 3D: animasi + gambar scene ke canvas WebGL.
