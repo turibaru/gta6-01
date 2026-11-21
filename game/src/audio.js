@@ -44,8 +44,7 @@
       } catch (e) { /* audio is best-effort */ }
     }
 
-    function startEngine() {
-      var c = ensure();
+    function startEngine() {      var c = ensure();
       if (!c || engineOsc) return;
       try {
         engineOsc = c.createOscillator();
@@ -93,6 +92,45 @@
       }
     }
 
+    // Round 3: one-shot notes for the radio sequencer (bass, arp, pad).
+    function radioNote(freq, dur, type, vol) {
+      if (muted) return;
+      var c = ensure();
+      if (!c) return;
+      try {
+        var o = c.createOscillator();
+        var g = c.createGain();
+        o.type = type || 'sawtooth';
+        o.frequency.value = freq;
+        g.gain.setValueAtTime(vol || 0.04, c.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.001, c.currentTime + dur);
+        o.connect(g); g.connect(c.destination);
+        o.start(); o.stop(c.currentTime + dur);
+      } catch (e) { /* audio is best-effort */ }
+    }
+
+    function shootSound(kind) {
+      if (kind === 'scattergun') { blip(140, 0.22, 'sawtooth', 0.22); blip(70, 0.3, 'square', 0.14); }
+      else if (kind === 'smg') { blip(320, 0.07, 'square', 0.11); }
+      else { blip(240, 0.12, 'square', 0.16); }
+    }
+
+    function swingSound() { blip(180, 0.12, 'sine', 0.1); setTimeout(function () { blip(120, 0.1, 'sine', 0.08); }, 60); }
+
+    function heliSound() {
+      blip(60, 0.5, 'sawtooth', 0.12);
+      setTimeout(function () { blip(60, 0.5, 'sawtooth', 0.1); }, 350);
+      setTimeout(function () { blip(60, 0.5, 'sawtooth', 0.08); }, 700);
+    }
+
+    function sirenBlipSound() { blip(950, 0.14, 'triangle', 0.12); setTimeout(function () { blip(700, 0.14, 'triangle', 0.12); }, 150); }
+
+    function radioJingleSound() {
+      blip(659, 0.1, 'sine', 0.07);
+      setTimeout(function () { blip(880, 0.1, 'sine', 0.07); }, 100);
+      setTimeout(function () { blip(1318, 0.18, 'sine', 0.07); }, 200);
+    }
+
     return {
       unlock: unlock,
       toggleMute: function () {
@@ -101,6 +139,12 @@
         return muted;
       },
       isMuted: function () { return muted; },
+      radioNote: radioNote,
+      shoot: shootSound,
+      swing: swingSound,
+      heli: heliSound,
+      sirenBlip: sirenBlipSound,
+      radioJingle: radioJingleSound,
       pickup: function () { blip(880, 0.18, 'sine', 0.16); setTimeout(function () { blip(1318, 0.22, 'sine', 0.14); }, 90); },
       missionDone: function () {
         blip(523, 0.15, 'square', 0.08);

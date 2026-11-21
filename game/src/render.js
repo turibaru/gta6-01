@@ -5,7 +5,7 @@
   var NB = window.NeonBay;
   var C = NB.Config;
 
-  function drawGround(ctx, cam, city) {
+  function drawGround(ctx, cam, city, time) {
     var x0 = Math.max(0, cam.x - 40), y0 = Math.max(0, cam.y - 40);
     var x1 = Math.min(C.worldWidth, cam.x + C.canvasWidth + 40);
     var y1 = Math.min(C.worldHeight, cam.y + C.canvasHeight + 40);
@@ -62,6 +62,10 @@
       ctx.beginPath(); ctx.moveTo(roads.xs[i] - 48, y0); ctx.lineTo(roads.xs[i] - 48, y1); ctx.stroke();
       ctx.beginPath(); ctx.moveTo(roads.xs[i] + 48, y0); ctx.lineTo(roads.xs[i] + 48, y1); ctx.stroke();
     }
+    // Round 3: zebra crossings, animated surf and the dock container yard.
+    NB.Visuals.drawCrosswalks(ctx, cam);
+    NB.Visuals.drawWaves(ctx, cam, time || 0);
+    NB.Visuals.drawDockContainers(ctx, cam, NB.Visuals.dockContainers());
   }
 
   function drawCityProps(ctx, cam, city) {
@@ -72,6 +76,8 @@
           b.x + b.w < cam.x - 20 || b.y + b.h < cam.y - 20) continue;
       ctx.fillStyle = 'rgba(0,0,0,0.35)';
       ctx.fillRect(b.x + 6, b.y + 8, b.w, b.h);
+      // Round 3: 2.5D extrusion — sunlit south face, shadowed east face.
+      NB.Visuals.drawBuilding25D(ctx, b, 0);
       ctx.fillStyle = b.roof;
       ctx.fillRect(b.x, b.y, b.w, b.h);
       ctx.strokeStyle = 'rgba(255,255,255,0.25)';
@@ -105,6 +111,11 @@
       ctx.fillStyle = s.color;
       ctx.fillText(s.text, s.x, s.y);
       ctx.shadowBlur = 0;
+    }
+    // Round 3: street lamps glowing along the Strip.
+    for (var lx = 200; lx < 3000; lx += 400) {
+      if (lx < cam.x - 60 || lx > cam.x + C.canvasWidth + 60) continue;
+      NB.Visuals.drawStreetLamp(ctx, lx, 1150, 0);
     }
     // Palm trees.
     for (i = 0; i < city.palms.length; i++) {
@@ -268,6 +279,80 @@
     ctx.fillText('NEON BAY', mx, my + mh + 16);
   }
 
+  function drawBullets(ctx, bullets) {
+    for (var i = 0; i < bullets.length; i++) {
+      var b = bullets[i];
+      ctx.strokeStyle = b.color;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(b.x - b.vx * 0.02, b.y - b.vy * 0.02);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath(); ctx.arc(b.x, b.y, 2, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+
+  // Round 3 weapon wheel: four slots with live ammo counts.
+  function drawWeaponWheel(ctx, state) {
+    var w = state.weapons;
+    var x = C.canvasWidth - 14, y = C.canvasHeight - 118;
+    ctx.textAlign = 'right';
+    ctx.fillStyle = C.colors.hudBg;
+    ctx.beginPath(); ctx.roundRect(x - 300, y, 300, 46, 8); ctx.fill();
+    ctx.font = 'bold 12px sans-serif';
+    for (var i = 0; i < NB.Weapons.length; i++) {
+      var def = NB.Weapons[i];
+      var sx = x - 226 + i * 74;
+      var active = w.current === i;
+      ctx.fillStyle = active ? def.color : 'rgba(255,255,255,0.35)';
+      ctx.fillText((i + 1) + ' ' + def.name, sx + 34, y + 18);
+      var ammo = w.slots[i].ammo;
+      ctx.fillStyle = '#fff3e0';
+      ctx.font = '12px sans-serif';
+      ctx.fillText(ammo === Infinity ? '∞' : '' + ammo, sx + 34, y + 36);
+      ctx.font = 'bold 12px sans-serif';
+      if (active) {
+        ctx.strokeStyle = def.color;
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.roundRect(sx - 4, y + 4, 72, 38, 6); ctx.stroke();
+      }
+    }
+  }
+
+  // Round 3 respect bar: current rank and progress to the next one.
+  function drawRespectBar(ctx, state) {
+    var r = state.respect;
+    var mw = 188, mh = 142;
+    var mx = C.canvasWidth - mw - 12, my = 12 + mh + 24;
+    ctx.fillStyle = C.colors.hudBg;
+    ctx.beginPath(); ctx.roundRect(mx - 4, my - 4, mw + 8, 54, 8); ctx.fill();
+    ctx.fillStyle = C.colors.hudAccent;
+    ctx.font = 'bold 13px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText('RESPECT: ' + r.rankName(), mx, my + 14);
+    ctx.fillStyle = '#333';
+    ctx.fillRect(mx, my + 22, mw, 10);
+    ctx.fillStyle = '#ff2e88';
+    ctx.fillRect(mx, my + 22, mw * r.progress(), 10);
+    var next = r.nextNeed();
+    ctx.fillStyle = C.colors.hudText;
+    ctx.font = '11px sans-serif';
+    ctx.fillText(next === null ? 'MAX RANK — KINGPIN' : r.rp + ' / ' + next + ' RP to ' + NB.RespectRanks[r.rankIndex + 1].name, mx, my + 46);
+  }
+
+  // Round 3 radio badge, top-centre of the screen.
+  function drawRadioBadge(ctx, state) {
+    var label = '♪ ' + state.radio.name();
+    ctx.font = 'bold 13px sans-serif';
+    var tw = ctx.measureText(label).width + 28;
+    ctx.fillStyle = C.colors.hudBg;
+    ctx.beginPath(); ctx.roundRect((C.canvasWidth - tw) / 2, 12, tw, 30, 8); ctx.fill();
+    ctx.fillStyle = '#22d3ee';
+    ctx.textAlign = 'center';
+    ctx.fillText(label, C.canvasWidth / 2, 32);
+  }
+
   function drawHud(ctx, state) {
     ctx.textAlign = 'left';
     // Top-left: cash, score, district.
@@ -291,6 +376,13 @@
     ctx.fillStyle = C.colors.hudText;
     ctx.font = '12px sans-serif';
     ctx.fillText(state.wanted > 0 ? 'WANTED — Bay PD inbound' : 'No heat', 200, 130);
+    // Round 3: flashing air-unit warning while AIR-1 is overhead.
+    if (state.heli && state.heli.active) {
+      var blink = Math.sin(state.time * 8) > 0;
+      ctx.fillStyle = blink ? '#ff4757' : '#ffb347';
+      ctx.font = 'bold 14px sans-serif';
+      ctx.fillText('⚠ AIR-1 OVERHEAD — stay moving!', 24, 158);
+    }
     // Bottom-left: health + speed.
     ctx.fillStyle = C.colors.hudBg;
     ctx.beginPath(); ctx.roundRect(12, C.canvasHeight - 58, 200, 46, 8); ctx.fill();
@@ -303,6 +395,13 @@
     ctx.font = 'bold 13px sans-serif';
     ctx.fillText(state.player.inCar ? 'CAR' : 'ON FOOT', 142, C.canvasHeight - 30);
     ctx.fillText(Math.round(state.speedKmh) + ' km/h', 24, C.canvasHeight - 18);
+    // Round 3: car condition as a plain percentage.
+    if (state.player.inCar && state.player.car) {
+      var maxHp = state.player.car.maxHealth || 100;
+      ctx.fillStyle = '#ffd166';
+      ctx.font = 'bold 12px sans-serif';
+      ctx.fillText('CONDITION ' + Math.max(0, Math.round(state.player.car.health / maxHp * 100)) + '%', 24, C.canvasHeight - 66);
+    }
     // Bottom-center: mission banner.
     var m = state.missions.current();
     ctx.fillStyle = C.colors.hudBg;
@@ -317,6 +416,13 @@
     var status = state.missions.phase === 'active'
       ? 'Time left: ' + Math.ceil(state.missions.timeLeft) + 's — reach the pink marker'
       : 'Press ENTER to start the job';
+    // Round 3: takedown counter in the mission banner.
+    if (state.missions.phase === 'active' && m.kind === 'takedown') {
+      status = 'Runners down: ' + state.missions.kills + '/' + (m.killsNeeded || 5) + '  •  Time left: ' + Math.ceil(state.missions.timeLeft) + 's';
+    }
+    if (state.missions.phase === 'active' && m.kind === 'race') {
+      status = 'Checkpoint ' + (state.missions.raceIdx + 1) + '/4 — beat Vega!  •  Time left: ' + Math.ceil(state.missions.timeLeft) + 's';
+    }
     ctx.fillText(status, C.canvasWidth / 2, C.canvasHeight - 22);
     // Transient centre message.
     if (state.missions.messageTimer > 0) {
@@ -333,6 +439,11 @@
     ctx.font = '12px sans-serif';
     ctx.fillText('WASD drive / walk  •  E enter car  •  SPACE brake', C.canvasWidth - 14, C.canvasHeight - 66);
     ctx.fillText('P pause  •  M mute  •  ENTER start job', C.canvasWidth - 14, C.canvasHeight - 50);
+    ctx.fillText('1-4 weapons  •  F shoot  •  G garage  •  R radio', C.canvasWidth - 14, C.canvasHeight - 34);
+    // Round 3 HUD panels.
+    drawWeaponWheel(ctx, state);
+    drawRespectBar(ctx, state);
+    drawRadioBadge(ctx, state);
     drawMinimap(ctx, state);
   }
 
@@ -378,6 +489,9 @@
     ctx.fillText('WASD / arrows to move  •  E to steal a car  •  SPACE to brake', C.canvasWidth / 2, 524);
     ctx.fillStyle = '#ffd166';
     ctx.fillText('Press ENTER or click START — best haul so far: $' + state.bestCash, C.canvasWidth / 2, 548);
+    ctx.fillStyle = '#22d3ee';
+    ctx.font = '14px sans-serif';
+    ctx.fillText('6 jobs  •  weapon wheel (1-4, F to shoot)  •  garage (G)  •  radio (R)  •  respect ranks  •  AIR-1', C.canvasWidth / 2, 572);
     // Start button.
     state.startButton = { x: C.canvasWidth / 2 - 90, y: 380, w: 180, h: 44 };
     ctx.fillStyle = '#ff2e88';
@@ -426,6 +540,7 @@
     drawPlayer: drawPlayer,
     drawMarker: drawMarker,
     drawParticles: drawParticles,
+    drawBullets: drawBullets,
     drawHud: drawHud,
     drawStartScreen: drawStartScreen,
     drawGameOver: drawGameOver,

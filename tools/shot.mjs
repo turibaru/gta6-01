@@ -9,10 +9,10 @@ const CHROME = '/home/hatch/.cache/ms-playwright/chromium-1255/chrome-linux64/ch
 const PORT = 9224;
 const BASE = 'http://localhost:8080';
 const SHOTS = [
-  { shot: 'cover', file: 'screenshots/01-cover.jpg' },
-  { shot: 'chase', file: 'screenshots/02-chase.jpg' },
-  { shot: 'mission', file: 'screenshots/03-mission.jpg' },
-  { shot: 'drive', file: 'screenshots/04-drive.jpg' }
+  { shot: 'start', file: 'screenshots/1-start.jpg' },
+  { shot: 'drive', file: 'screenshots/2-drive.jpg' },
+  { shot: 'chase', file: 'screenshots/3-chase.jpg' },
+  { shot: 'mission', file: 'screenshots/4-mission.jpg' }
 ];
 
 async function getWsUrl() {

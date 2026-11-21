@@ -68,6 +68,19 @@
       peds: NB.Entities.spawnPeds(rand),
       parked: parked,
       police: [],
+      // Round 3 systems.
+      bullets: [],
+      roadblocks: [],
+      heli: NB.Heat.createHeli(),
+      weapons: NB.WeaponsRuntime.createWeapons(),
+      respect: NB.Respect.createRespect(),
+      garage: NB.Garage.createGarage(),
+      radio: NB.Radio.createRadio(),
+      dialog: NB.Dialog.createDialog(),
+      rival: null,
+      runners: [],
+      viewW: C.canvasWidth / C.zoom,
+      viewH: C.canvasHeight / C.zoom,
       player: player,
       cam: { x: 0, y: 0 },
       screen: 'start', // start | play | paused | over
@@ -90,6 +103,7 @@
   function enterCar(state) {
     var car = nearestCar(state, 70);
     if (!car) return;
+    var wasParked = car.kind === 'parked';
     var p = state.player;
     p.inCar = true;
     p.car = car;
@@ -97,8 +111,10 @@
     car.kind = 'player';
     state.audio.click();
     state.particles.burst(car.x, car.y, '#22d3ee', 10, 120);
+    // Round 3: boosting a ride earns street respect.
+    if (wasParked) state.respect.add(state, 10, 'Car stolen');
     // Taking a parked car in sight of the law draws heat.
-    if (car.kind === 'parked' && state.police.length === 0 && Math.random() < 0.4) {
+    if (wasParked && state.police.length === 0 && Math.random() < 0.4) {
       raiseWanted(state, 1, 'Car stolen in broad daylight!');
     }
   }
@@ -123,6 +139,10 @@
       state.missions.showMessage(reason + '  (Wanted ' + state.wanted + '★)', 3);
       var need = Math.min(state.wanted, C.policeMax) - state.police.length;
       if (need > 0) NB.Entities.spawnPoliceNear(state.police, state.player, need);
+      // Round 3: at three stars the NBPD starts dropping roadblocks.
+      if (state.wanted >= C.roadblockWanted && before < C.roadblockWanted) {
+        NB.Heat.spawnRoadblock(state);
+      }
     }
   }
 
@@ -135,7 +155,9 @@
       if (axis.y < 0) car.speed += C.car.accel * dt;
       if (axis.y > 0) car.speed -= (car.speed > 0 ? C.car.brake : C.car.reverseAccel) * dt;
       if (input.isDown('space')) car.speed -= Math.sign(car.speed) * C.car.brake * dt;
-      car.speed = Math.max(-C.car.maxReverse, Math.min(C.car.maxSpeed, car.speed));
+      // Round 3: garage engine tunes raise this car's top speed.
+      var topSpeed = car.topSpeed || C.car.maxSpeed;
+      car.speed = Math.max(-C.car.maxReverse, Math.min(topSpeed, car.speed));
       if (axis.y === 0 && !input.isDown('space')) {
         car.speed *= Math.pow(C.car.drag, dt * 60);
         if (Math.abs(car.speed) < 4) car.speed = 0;
@@ -309,23 +331,62 @@
   function update(state, dt) {
     state.time += dt;
     if (state.screen !== 'play') return;
+    // Round 3: while the garage panel is open the city waits.
+    if (state.garage.open) {
+      if (state.input.wasPressed('g')) { state.garage.open = false; state.audio.click(); }
+      for (var g = 0; g < 4; g++) {
+        if (state.input.wasPressed('' + (g + 1))) state.garage.buy(state, g);
+      }
+      state.radio.update(state, dt);
+      state.dialog.update(dt, state);
+      return;
+    }
     updatePlayer(state, dt);
     if (state.screen !== 'play') return;
     NB.Entities.updateTraffic(state.traffic, dt, state.city, state.player.inCar ? state.player.car : null);
     NB.Entities.updatePeds(state.peds, dt, state.city);
     NB.Entities.updatePolice(state.police, state.player, dt, state.city);
     state.particles.update(dt);
+    // Round 3 systems.
+    state.weapons.tick(dt);
+    NB.WeaponsRuntime.updateBullets(state, dt);
+    NB.Heat.updateHeli(state, dt);
+    NB.Heat.updateRoadblocks(state, dt);
+    state.radio.update(state, dt);
+    state.dialog.update(dt, state);
+    if (state.rival) state.rival.update(state, dt);
+    NB.Rivals.updateRunners(state, dt);
     updateCollisions(state, dt);
     if (state.screen !== 'play') return;
     updateWanted(state, dt);
     state.missions.update(dt, state);
-    if (state.missions.phase === 'active' && state.missions.reachedTarget(state)) {
+    if (state.missions.phase === 'active' && state.missions.checkProgress(state)) {
       state.missions.complete(state);
       state.audio.pickup();
     }
-    // Camera follows the player.
-    state.cam.x = Math.max(0, Math.min(C.worldWidth - C.canvasWidth, state.player.x - C.canvasWidth / 2));
-    state.cam.y = Math.max(0, Math.min(C.worldHeight - C.canvasHeight, state.player.y - C.canvasHeight / 2));
+    // Round 3: shooting. Click aims at the cursor; F fires where you face.
+    if (state.input.mouse.clicked) {
+      var wx = state.cam.x + state.input.mouse.clickX / C.zoom;
+      var wy = state.cam.y + state.input.mouse.clickY / C.zoom;
+      state.weapons.fire(state, wx, wy);
+    }
+    if (state.input.wasPressed('f')) {
+      var p = state.player;
+      state.weapons.fire(state, p.x + Math.cos(p.angle) * 200, p.y + Math.sin(p.angle) * 200);
+    }
+    // Round 3: garage, radio and the weapon wheel.
+    if (state.input.wasPressed('g') && state.garage.near(state)) {
+      state.garage.open = true;
+      state.audio.click();
+      state.missions.showMessage('Welcome to Rico\'s Garage.', 2);
+    }
+    if (state.input.wasPressed('r')) state.radio.next(state);
+    for (var w = 0; w < 4; w++) {
+      if (state.input.wasPressed('' + (w + 1))) state.weapons.select(w, state);
+    }
+    // Camera follows the player (zoomed view: a smaller world window).
+    state.cam.x = Math.max(0, Math.min(C.worldWidth - state.viewW, state.player.x - state.viewW / 2));
+    state.cam.y = Math.max(0, Math.min(C.worldHeight - state.viewH, state.player.y - state.viewH / 2));
     if (state.input.wasPressed('e')) {
       if (state.player.inCar) exitCar(state); else enterCar(state);
     }
@@ -341,10 +402,13 @@
       NB.Render.drawStartScreen(ctx, state);
       return;
     }
+    // Round 3: 1.5x zoom — the car reads bigger, the city feels closer.
     ctx.save();
+    ctx.scale(C.zoom, C.zoom);
     ctx.translate(-Math.round(state.cam.x), -Math.round(state.cam.y));
-    NB.Render.drawGround(ctx, state.cam, state.city);
+    NB.Render.drawGround(ctx, state.cam, state.city, state.time);
     NB.Render.drawCityProps(ctx, state.cam, state.city);
+    NB.Garage.drawGarageMarker(ctx, state, state.time);
     if (state.missions.phase === 'active') {
       NB.Render.drawMarker(ctx, state.missions.current().target, state.time);
     }
@@ -352,14 +416,27 @@
     for (i = 0; i < state.parked.length; i++) NB.Render.drawCar(ctx, state.parked[i]);
     for (i = 0; i < state.traffic.length; i++) NB.Render.drawCar(ctx, state.traffic[i]);
     for (i = 0; i < state.police.length; i++) NB.Render.drawCar(ctx, state.police[i]);
+    if (state.rival) NB.Render.drawCar(ctx, state.rival.car);
     if (state.player.inCar && state.player.car) NB.Render.drawCar(ctx, state.player.car);
     for (i = 0; i < state.peds.length; i++) {
       if (state.peds[i].x > -100) NB.Render.drawPed(ctx, state.peds[i]);
     }
+    for (i = 0; i < state.runners.length; i++) {
+      var r = state.runners[i];
+      if (!r.dead) { NB.Render.drawPed(ctx, r); NB.Rivals.drawRunner(ctx, r); }
+    }
     NB.Render.drawPlayer(ctx, state.player);
+    NB.Render.drawBullets(ctx, state.bullets);
     NB.Render.drawParticles(ctx, state.particles);
+    for (i = 0; i < state.roadblocks.length; i++) NB.Heat.drawRoadblock(ctx, state.roadblocks[i]);
+    NB.Heat.drawHeli(ctx, state.heli, state.time);
+    if (state.rival) NB.Rivals.drawRival(ctx, state.rival);
     ctx.restore();
+    // Round 3: golden-hour vignette over the world, under the HUD.
+    NB.Visuals.drawVignette(ctx);
     NB.Render.drawHud(ctx, state);
+    state.dialog.draw(ctx, state);
+    if (state.garage.open) NB.Garage.drawGaragePanel(ctx, state);
     if (state.screen === 'paused') NB.Render.drawPaused(ctx);
     if (state.screen === 'over') NB.Render.drawGameOver(ctx, state);
   }
@@ -392,33 +469,95 @@
   }
 
   // Screenshot presets: deterministic scenes driven by ?shot=<name> so the
-  // shipped screenshots show real gameplay, not the menu.
+  // shipped screenshots show real gameplay, not the menu. Each scene is
+  // staged dense: traffic around the player, police in a fan (never a
+  // straight line), the heli and a roadblock in the chase, and a live
+  // shootout in the mission frame.
   function applyShot(state, name) {
     state.shot = name;
     state.screen = 'play';
     state.audio.unlock();
     var p = state.player;
-    if (name === 'cover' || name === 'drive') {
+    // Cluster traffic and pedestrians around the player so every frame
+    // reads busy instead of empty.
+    function clusterTraffic(cx, cy, n) {
+      for (var i = 0; i < n && i < state.traffic.length; i++) {
+        var c = state.traffic[i];
+        var a = (i / n) * Math.PI * 2;
+        c.x = cx + Math.cos(a) * (140 + (i % 3) * 90);
+        c.y = cy + Math.sin(a) * (110 + (i % 2) * 70);
+        c.angle = a + Math.PI / 2;
+        c.speed = 60 + (i % 4) * 30;
+        c.targetSpeed = c.speed;
+      }
+      for (var j = 0; j < 8 && j < state.peds.length; j++) {
+        var ped = state.peds[j];
+        ped.x = cx + (j % 4 - 1.5) * 90;
+        ped.y = cy + (Math.floor(j / 4) - 0.5) * 120;
+      }
+    }
+    // Police fan: cruisers closing from spread angles, never a line.
+    function fanPolice(cx, cy, count) {
+      state.police.length = 0;
+      var angles = [-1.1, -0.35, 0.35, 1.1, -1.8];
+      for (var i = 0; i < count; i++) {
+        var a = angles[i % angles.length];
+        var d = 300 + (i % 3) * 90;
+        var cop = NB.Entities.makeCar(cx + Math.cos(a) * d, cy + Math.sin(a) * d, a + Math.PI, '#1a1a2e', 'police');
+        cop.speed = 220;
+        state.police.push(cop);
+      }
+    }
+    if (name === 'start') {
       enterCarAt(state, 1000, 1248);
-      state.missions.index = 0;
-      state.missions.start(state);
-      state.cam.x = p.x - C.canvasWidth / 2;
-      state.cam.y = p.y - C.canvasHeight / 2;
-    } else if (name === 'chase') {
-      enterCarAt(state, 1000, 1248);
-      state.wanted = 3;
-      state.wantedTimer = 999;
-      NB.Entities.spawnPoliceNear(state.police, p, 3);
-      state.missions.index = 2;
-      state.missions.start(state);
-      state.missions.timeLeft = 42;
-    } else if (name === 'mission') {
-      enterCarAt(state, 2600, 448);
       state.missions.index = 0;
       state.missions.start(state);
       state.missions.timeLeft = 118;
-      state.missions.cash = 400;
-      state.score = 400;
+      clusterTraffic(1000, 1248, 8);
+    } else if (name === 'drive') {
+      enterCarAt(state, 1400, 1248);
+      state.missions.index = 1;
+      state.missions.start(state);
+      state.missions.timeLeft = 68;
+      clusterTraffic(1400, 1248, 10);
+    } else if (name === 'chase') {
+      enterCarAt(state, 1000, 1248);
+      state.wanted = 4;
+      state.wantedTimer = 999;
+      fanPolice(1000, 1248, 4);
+      NB.Heat.spawnRoadblock(state);
+      state.heli.active = true;
+      state.heli.x = 820; state.heli.y = 1050;
+      state.missions.index = 2;
+      state.missions.start(state);
+      state.missions.timeLeft = 42;
+      clusterTraffic(1000, 1248, 6);
+    } else if (name === 'mission') {
+      // Shootout frame: mission 6, on foot with the scattergun, Coral
+      // runners closing in and tracer fire already in the air.
+      state.missions.index = 5;
+      p.x = 1700; p.y = 1300; p.angle = 0; p.inCar = false; p.car = null;
+      state.missions.start(state);
+      state.missions.timeLeft = 96;
+      state.weapons.select(1, state);
+      for (var k = 0; k < state.runners.length; k++) {
+        var r = state.runners[k];
+        var ra = k * 1.26;
+        r.x = 1700 + Math.cos(ra) * 220;
+        r.y = 1300 + Math.sin(ra) * 170;
+      }
+      for (var b = 0; b < 4; b++) {
+        var ba = b * 0.9 - 0.6;
+        state.bullets.push({
+          x: 1700 + Math.cos(ba) * 60, y: 1300 + Math.sin(ba) * 60,
+          vx: Math.cos(ba) * 760, vy: Math.sin(ba) * 760,
+          life: 0.6, damage: 11, color: '#ff8c42'
+        });
+      }
+      state.wanted = 2;
+      state.wantedTimer = 999;
+      fanPolice(1700, 1300, 2);
+      clusterTraffic(1700, 1300, 4);
     }
     // Let traffic and peds settle for a few frames before the shot.
     for (var i = 0; i < 40; i++) {
@@ -426,8 +565,8 @@
       NB.Entities.updatePeds(state.peds, 1 / 60, state.city);
       NB.Entities.updatePolice(state.police, p, 1 / 60, state.city);
     }
-    state.cam.x = Math.max(0, Math.min(C.worldWidth - C.canvasWidth, p.x - C.canvasWidth / 2));
-    state.cam.y = Math.max(0, Math.min(C.worldHeight - C.canvasHeight, p.y - C.canvasHeight / 2));
+    state.cam.x = Math.max(0, Math.min(C.worldWidth - state.viewW, p.x - state.viewW / 2));
+    state.cam.y = Math.max(0, Math.min(C.worldHeight - state.viewH, p.y - state.viewH / 2));
   }
 
   function enterCarAt(state, x, y) {
@@ -465,6 +604,11 @@
       score: function () { return state.score; },
       cash: function () { return state.missions.cash; },
       wanted: function () { return state.wanted; },
+      respect: function () { return { rp: state.respect.rp, rank: state.respect.rankName() }; },
+      weapon: function () { return state.weapons.def().name; },
+      heli: function () { return state.heli.active; },
+      roadblocks: function () { return state.roadblocks.length; },
+      radio: function () { return state.radio.name(); },
       player: function () { return { x: state.player.x, y: state.player.y, inCar: state.player.inCar, speed: state.speedKmh }; }
     };
     document.getElementById('loading').textContent = '';

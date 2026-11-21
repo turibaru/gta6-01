@@ -9,17 +9,35 @@
       index: 0,
       phase: 'brief', // brief | active | done
       timeLeft: 0,
+      raceIdx: 0,
+      kills: 0,
       completed: 0,
       cash: 0,
       message: '',
       messageTimer: 0,
-      current: function () { return defs[this.index % defs.length]; },
+      current: function () {
+        var m = defs[this.index % defs.length];
+        if (m.kind === 'race' && this.phase === 'active') {
+          var cp = m.checkpoints[Math.min(this.raceIdx, m.checkpoints.length - 1)];
+          return {
+            id: m.id, title: m.title + '  (' + (this.raceIdx + 1) + '/' + m.checkpoints.length + ')',
+            brief: m.brief, target: cp, timeLimit: m.timeLimit, reward: m.reward,
+            wantedOnStart: m.wantedOnStart, kind: m.kind, checkpoints: m.checkpoints
+          };
+        }
+        return m;
+      },
       cycle: function () { return Math.floor(this.index / defs.length) + 1; },
       start: function (state) {
-        var m = this.current();
         this.phase = 'active';
+        this.raceIdx = 0;
+        this.kills = 0;
+        var m = this.current();
         this.timeLeft = m.timeLimit;
         if (m.wantedOnStart > state.wanted) state.wanted = m.wantedOnStart;
+        if (m.kind === 'race') state.rival = NB.Rivals.createRival(state);
+        if (m.kind === 'takedown') state.runners = NB.Rivals.spawnRunners(state, Math.random);
+        if (state.dialog) state.dialog.showFor(m.id, 'start');
         this.showMessage(m.title, 3.2);
         return m;
       },
@@ -45,6 +63,32 @@
         var dy = state.player.y - m.target.y;
         return dx * dx + dy * dy < 70 * 70;
       },
+      // Race missions advance checkpoint by checkpoint; other missions
+      // complete on reaching the target. Returns true when the job is done.
+      checkProgress: function (state) {
+        if (this.phase !== 'active') return false;
+        var m = defs[this.index % defs.length];
+        if (m.kind === 'race') {
+          if (!this.reachedTarget(state)) return false;
+          if (this.raceIdx < m.checkpoints.length - 1) {
+            this.raceIdx++;
+            this.showMessage('Checkpoint ' + (this.raceIdx + 1) + '/' + m.checkpoints.length + '!', 2);
+            state.audio.pickup();
+            return false;
+          }
+          return true;
+        }
+        return this.reachedTarget(state);
+      },
+      registerKill: function (state) {
+        this.kills++;
+        var m = defs[this.index % defs.length];
+        var need = m.killsNeeded || 0;
+        if (this.phase === 'active' && m.kind === 'takedown') {
+          this.showMessage('Coral runner down — ' + this.kills + '/' + need, 2);
+          if (this.kills >= need) this.complete(state);
+        }
+      },
       complete: function (state) {
         var m = this.current();
         var bonus = Math.round(this.timeLeft) * 10;
@@ -56,6 +100,10 @@
         this.phase = 'brief';
         this.showMessage('JOB DONE! +$' + total + '  (next: ' + this.current().title + ')', 4);
         state.audio.missionDone();
+        if (state.respect) state.respect.add(state, 80, 'Job complete');
+        if (state.dialog) state.dialog.showFor(m.id, 'done');
+        state.rival = null;
+        state.runners = [];
         state.particles.burst(m.target.x, m.target.y, '#ffd166', 40, 260);
         state.particles.burst(state.player.x, state.player.y, '#22d3ee', 24, 200);
       },

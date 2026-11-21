@@ -9,28 +9,28 @@
   NB.Shots = {
     scenes: [
       {
-        name: 'cover',
-        file: '01-cover.jpg',
-        shot: 'cover',
-        caption: 'Neon Bay at sunset — driving the Strip with the mission marker ahead.'
-      },
-      {
-        name: 'chase',
-        file: '02-chase.jpg',
-        shot: 'chase',
-        caption: 'Three-star wanted level — Bay PD cruisers closing in, minimap and HUD live.'
-      },
-      {
-        name: 'mission',
-        file: '03-mission.jpg',
-        shot: 'mission',
-        caption: 'Mission 1 pickup at the pier — beach, palms and the pink target marker.'
+        name: 'start',
+        file: '1-start.jpg',
+        shot: 'start',
+        caption: 'Neon Bay at sunset — driving the Strip with the mission marker ahead, traffic closing in.'
       },
       {
         name: 'drive',
-        file: '04-drive.jpg',
+        file: '2-drive.jpg',
         shot: 'drive',
-        caption: 'Cruising Neon Bay traffic with pedestrians, neon signs and the HUD.'
+        caption: 'Cruising Neon Bay traffic with pedestrians, neon signs and the HUD live.'
+      },
+      {
+        name: 'chase',
+        file: '3-chase.jpg',
+        shot: 'chase',
+        caption: 'Four-star wanted level — AIR-1 overhead, a roadblock ahead, Bay PD cruisers in a fan.'
+      },
+      {
+        name: 'mission',
+        file: '4-mission.jpg',
+        shot: 'mission',
+        caption: 'Mission 6 shootout — scattergun out, Coral runners closing in, tracers in the air.'
       }
     ]
   };

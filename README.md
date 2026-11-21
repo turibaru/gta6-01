@@ -4,11 +4,11 @@
 [![rank](https://make.fun/badge/gta6-01/turibaru/gta6-01/rank.svg)](https://make.fun/bounty/gta6-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 [![reward](https://make.fun/badge/gta6-01/turibaru/gta6-01/reward.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 
-# Neon Bay: Sunset Run
+# NEON BAY: SUNSET RUN — open-world crime in a sunset beach city: 6 story jobs, NBPD dispatch with roadblocks and air support, weapon wheel, garage upgrades, respect ranks, radio & saves
 
-An original open-world sunset crime game for the **make.fun "Make GTA 6" (gta6-01)** bounty — built from scratch in a single recorded session, with no assets, names, or code taken from any commercial game.
+An original open-world sunset crime game for the **make.fun "Make GTA 6" (gta6-01)** bounty — built from scratch in recorded sessions, with no assets, names, or code taken from any commercial game.
 
-You are a courier in **Neon Bay**, a sun-soaked coastal city of palm-lined boulevards, neon signs, a pier, a marina, and an old arcade. Explore the city **on foot and by car**, steal cars, dodge traffic and pedestrians, outrun the **Bay PD** as your wanted level climbs, and run **Rico's three-job story chain** across the map.
+You are a courier in **Neon Bay**, a sun-soaked coastal city of palm-lined boulevards, neon signs, a pier, a marina, dockyards, and an old arcade. Explore the city **on foot and by car**, steal cars, dodge traffic and pedestrians, outrun the **Bay PD** as your wanted level climbs, and run **Rico's six-job story chain** across the map — from a sunset pickup at the pier to a street race against Vega, a harbor heist, and a turf war with the Coral crew.
 
 ## How to play
 
@@ -20,40 +20,55 @@ Open `game/index.html` in desktop Chrome (or run `node serve.ts` and visit http:
 | E | Enter / steal a nearby car, or step out of one |
 | SPACE | Brake |
 | ENTER | Start the current job |
+| 1–4 | Weapon wheel: Pistol / Scattergun / SMG / Fists |
+| F or mouse click | Shoot (click aims at the cursor) |
+| G | Garage at the safehouse (repair, armor, engine, repaint) |
+| R | Switch radio station (NEON 99.1 / OMBO 98.4 / VICE FM) |
+| H | Honk |
 | P | Pause |
 | M | Mute |
-| R | Run it back after game over |
+| R (after game over) | Run it back |
 
 ## What's in the game
 
-- **Open city** — a 3200×2400 road grid with six districts (Neon Strip, Marina, The Pier, Palm Heights, Bayfront, Old Arcade), buildings with lit windows and neon signs, palm trees, a beach and the bay.
-- **On foot and by car** — walk the sidewalks, then press E near any parked or traffic car to take it. Cars have acceleration, steering, braking, and damage.
-- **Traffic and pedestrians** — 14 traffic cars driving the grid and 26 pedestrians wandering the sidewalks.
-- **Wanted level and police** — hit a pedestrian, smash traffic, speed past a patrol, or steal a car in daylight and the stars climb; Bay PD cruisers chase and ram you until you lose the heat.
-- **Missions and story** — three jobs for Rico: a sunset pickup at the pier, a timed delivery dash to the Marina Hotel, and a three-star escape to the old arcade hideout. Completing jobs pays cash with a time bonus.
-- **HUD with minimap** — cash, score, best haul, wanted stars, health, speed, mission banner with timer, and a live minimap showing the player, police, and the mission marker.
-- **Combat by collision** — ramming, crashes, and police takedowns damage your car or your health; get busted on foot or wrecked in a car and the run ends.
-- **Sound and save** — synthesized engine hum, sirens, and pickup chimes (WebAudio, no audio files); your best haul and jobs persist in the browser.
-- **Start screen, pause, and game-over screen** with a restart.
+- **Open city** — a 3200×2400 road grid with six districts (Neon Strip, Marina, The Pier, Palm Heights, Bayfront, Old Arcade), 2.5D buildings with sunset side faces and long shadows, lit windows, neon signs, street lamps, palm trees, zebra crosswalks, dock containers, animated surf on the beach, and a golden-hour vignette.
+- **Six story jobs** — a sunset pickup at the pier, a timed delivery dash to the Marina Hotel, a three-star escape to the old arcade hideout, the **Sunset Grand Prix** (a 4-checkpoint street race against rival Vega), the **Harbor Heist** (steal a money truck at the Docks and shake a three-star tail), and **Clean House** (take down five Coral runners). Completing jobs pays cash with a time bonus.
+- **NBPD dispatch** — hit a pedestrian, smash traffic, speed past a patrol, or steal a car in daylight and the stars climb. From three stars the department drops **roadblocks** on the road ahead (ram them or shoot them to smash through); from four stars **AIR-1**, the police helicopter, shadows you with a sweeping searchlight.
+- **Weapon wheel** — Pistol (unlimited ammo), Scattergun (5-pellet spread, 24 shells), SMG (rapid fire, 120 rounds), and Fists for close work. Ammo counts live in the HUD; bullets can drop cruisers, runners, and roadblocks — and clip Vega's race car.
+- **Garage upgrades** — park at the safehouse garage and spend cash on a full repair ($100), plated armor (+50 max health, $500), a tuned engine (+60 top speed, $800), or a fresh sunset repaint ($150).
+- **Respect ranks** — earn RP from jobs, car theft, and takedowns and climb Rookie → Hustler → Fixer → Shot Caller → Kingpin. Rank-ups pay a cash bonus; the HUD shows your rank and progress to the next one.
+- **Radio** — three synthwave stations (NEON 99.1, OMBO 98.4, VICE FM), each with its own key, tempo, and bass line, synthesized live in WebAudio. Press R to flip stations.
+- **Crew dialogue** — Marco, Mira, and Vega talk to you in portrait dialogue boxes when jobs start and finish.
+- **Traffic and pedestrians** — 14 traffic cars driving the grid and 26 pedestrians wandering the sidewalks, plus Vega's rival racer and the five Coral runners.
+- **HUD with minimap** — cash, score, best haul, wanted stars, AIR-1 warning, car condition %, speed, weapon wheel with ammo, respect bar, radio badge, race checkpoint counter, mission banner with timer, and a live minimap showing the player, police, and the mission marker.
+- **Sound and save** — synthesized engine hum, sirens, gunshots, and pickup chimes (WebAudio, no audio files); your best haul and jobs persist in the browser.
 
 ## Screenshots
 
-Four real renders of the game running in headless Chromium (see `shots.json` for the scenes): the cover drive down the Neon Strip, a three-star police chase, the pier pickup, and cruising city traffic.
+Four real renders of the game running in headless Chromium (see `game/src/shots.js` for the scenes): the sunset start on the Strip, cruising city traffic, a four-star chase with AIR-1 and a roadblock, and the mission 6 shootout.
 
 ## Structure
 
 ```
 game/
   index.html          page + styles, loads the scripts below
-  src/config.js       constants, palette, mission definitions
+  src/config.js       constants, palette, mission definitions, weapons, radio, ranks
   src/world.js        city generation, roads, collision helpers
   src/input.js        keyboard + mouse input
-  src/audio.js        synthesized WebAudio sound engine
+  src/audio.js        synthesized WebAudio sound engine + radio notes
   src/entities.js     traffic, pedestrians, police AI, particles
-  src/missions.js     mission state machine and story progression
+  src/missions.js     mission state machine, race checkpoints, takedown counter
+  src/weapons.js      weapon wheel, bullets, hits on police/runners/roadblocks
+  src/heat.js         AIR-1 helicopter and police roadblocks
+  src/respect.js      respect ladder Rookie → Kingpin
+  src/garage.js       safehouse garage upgrades
+  src/radio.js        three synthwave station sequencers
+  src/dialog.js       crew dialogue boxes with portraits
+  src/rivals.js       Vega's race car and the Coral runners
+  src/visuals.js      2.5D buildings, waves, crosswalks, docks, vignette
   src/render.js       city, cars, HUD, minimap, menus
   src/shots.js        screenshot scene catalogue
-  src/main.js         game loop, player control, wanted level, save
+  src/main.js         game loop, player control, wanted level, camera zoom, save
 main.ts               entry program: copies game/ + screenshots/ to /output,
                       writes dossier.json with vendor/makefun-game.ts
 serve.ts              local static server for playtesting (port 8080)

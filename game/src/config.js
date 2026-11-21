@@ -56,7 +56,52 @@
     policeMax: 5,
     wantedDecaySeconds: 18,
     missionTimeBonus: 250,
-    saveKey: 'neon-bay-sunset-run-save-v1'
+    saveKey: 'neon-bay-sunset-run-save-v1',
+    // Round 3: closer camera so the car reads bigger on screen.
+    zoom: 1.5,
+    garage: { x: 1650, y: 1250, radius: 90 },
+    heliWanted: 4,
+    roadblockWanted: 3
+  };
+
+  // Round 3 loadout. Slot 1 is the trusty pistol (infinite ammo); slots 2
+  // and 3 are the new hardware; slot 4 is bare knuckles for close work.
+  NB.Weapons = [
+    { id: 'pistol', name: 'PISTOL', key: '1', damage: 16, rate: 0.32, speed: 900, spread: 0.03, pellets: 1, ammo: Infinity, maxAmmo: Infinity, color: '#ffd166' },
+    { id: 'scattergun', name: 'SCATTERGUN', key: '2', damage: 11, rate: 0.85, speed: 760, spread: 0.20, pellets: 5, ammo: 24, maxAmmo: 24, color: '#ff8c42' },
+    { id: 'smg', name: 'SMG', key: '3', damage: 8, rate: 0.09, speed: 980, spread: 0.09, pellets: 1, ammo: 120, maxAmmo: 120, color: '#22d3ee' },
+    { id: 'fists', name: 'FISTS', key: '4', damage: 22, rate: 0.45, speed: 0, spread: 0, pellets: 0, ammo: Infinity, maxAmmo: Infinity, color: '#ff6b81' }
+  ];
+
+  // Round 3 radio: three synthwave stations, all synthesized live.
+  NB.RadioStations = [
+    { name: 'NEON 99.1', tag: 'synthwave', root: 110, bpm: 96, wave: 'sawtooth' },
+    { name: 'OMBO 98.4', tag: 'midnight drive', root: 98, bpm: 82, wave: 'triangle' },
+    { name: 'VICE FM', tag: 'sunset chase', root: 123.47, bpm: 116, wave: 'square' }
+  ];
+
+  // Round 3 respect ladder. RP comes from jobs, car theft and takedowns.
+  NB.RespectRanks = [
+    { name: 'ROOKIE', need: 0 },
+    { name: 'HUSTLER', need: 150 },
+    { name: 'FIXER', need: 400 },
+    { name: 'SHOT CALLER', need: 800 },
+    { name: 'KINGPIN', need: 1400 }
+  ];
+
+  // Round 3 garage menu at the safehouse (press G nearby).
+  NB.GarageUpgrades = [
+    { id: 'repair', name: 'REPAIR', desc: 'Full bodywork — car back to 100%', price: 100 },
+    { id: 'armor', name: 'ARMOR +50 HP', desc: 'Plated doors, +50 max car health', price: 500 },
+    { id: 'engine', name: 'ENGINE +60 TOP SPEED', desc: 'Tuned V8, +60 top speed', price: 800 },
+    { id: 'repaint', name: 'REPAINT', desc: 'Fresh sunset paint job', price: 150 }
+  ];
+
+  // Round 3 crew: the voices behind the jobs.
+  NB.Crew = {
+    marco: { name: 'MARCO', role: 'wheelman', color: '#2ed573', initial: 'M', blurb: 'Knows every shortcut in Neon Bay.' },
+    mira: { name: 'MIRA', role: 'fixer', color: '#ff2e88', initial: 'R', blurb: 'Runs the jobs, keeps the books.' },
+    vega: { name: 'VEGA', role: 'rival racer', color: '#a55eea', initial: 'V', blurb: 'Undefeated on the Strip. Until tonight.' }
   };
 
   // Mission chain: a small original story about a courier in Neon Bay.
@@ -87,6 +132,43 @@
       timeLimit: 60,
       reward: 1500,
       wantedOnStart: 3
+    },
+    {
+      id: 'grandprix',
+      title: 'MISSION 4 — SUNSET GRAND PRIX',
+      brief: 'Vega challenged you to a street race at sunset. Beat her through 4 checkpoints — first across the line takes the pot.',
+      target: { x: 2600, y: 400 },
+      timeLimit: 100,
+      reward: 2000,
+      wantedOnStart: 1,
+      kind: 'race',
+      checkpoints: [
+        { x: 2600, y: 400 },
+        { x: 600, y: 400 },
+        { x: 600, y: 2000 },
+        { x: 2600, y: 2000 }
+      ]
+    },
+    {
+      id: 'heist',
+      title: 'MISSION 5 — HARBOR HEIST',
+      brief: 'A money truck is parked at the Docks. Grab it, then shake a three-star tail and bring it home.',
+      target: { x: 2750, y: 2100 },
+      timeLimit: 90,
+      reward: 2500,
+      wantedOnStart: 3,
+      kind: 'heist'
+    },
+    {
+      id: 'cleanhouse',
+      title: 'MISSION 6 — CLEAN HOUSE',
+      brief: 'Five Coral runners are muscling in on Rico\'s turf. Take all five down and the Strip is ours again.',
+      target: { x: 1700, y: 1300 },
+      timeLimit: 120,
+      reward: 3000,
+      wantedOnStart: 2,
+      kind: 'takedown',
+      killsNeeded: 5
     }
   ];
 
