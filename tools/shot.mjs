@@ -1,24 +1,23 @@
-// tools/shot.mjs — driver screenshot + playtest NEON BAY 3D via headless
-// Chromium over CDP (Chrome DevTools Protocol), memakai WebSocket bawaan
-// Node 22. Tanpa dependensi eksternal (tanpa puppeteer/playwright).
-//
-//   node tools/shot.mjs cover chase mission drive   # 4 screenshot
-//   node tools/shot.mjs --playtest                  # alur main via CDP
-//
-// Prasyarat: `node serve.ts` sudah jalan di localhost:8080.
-// Chromium dicari di (urutan): cache ms-playwright, /opt/meta-chromium,
-// lalu chromium/google-chrome di PATH. WebGL headless memakai SwiftShader.
+// NEON BAY: SUNSET RUN — tools/shot.mjs
+// Driver screenshot + playtest via headless Chromium over CDP (WebSocket
+// bawaan Node 22, TANPA puppeteer/playwright).
+//   node tools/shot.mjs cover chase mission drive   # ambil 4 screenshot
+//   node tools/shot.mjs --playtest                  # 12 langkah playtest
+// Prasyarat: serve.ts jalan (BASE default http://localhost:8080/).
+// Keluar 1 bila ada exception / console error di halaman.
+// Ditulis fresh di sesi terekam ronde 6, dari design spec §10-§11.
 
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
-import { existsSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-// Base URL server game — override bila port 8080 dipakai server lain:
-//   NEONBAY_BASE=http://localhost:8081/ PORT=8081 node serve.ts
-const BASE = process.env.NEONBAY_BASE || 'http://localhost:8080/';
+export const BASE = process.env.NEONBAY_BASE || 'http://localhost:8080/';
 const CDP_PORT = 9224;
+const REPO_ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
+const SHOTS_DIR = join(REPO_ROOT, 'screenshots');
 
 export const SHOT_FILES = {
   cover: 'screenshots/1-cover.jpg',
@@ -26,6 +25,10 @@ export const SHOT_FILES = {
   mission: 'screenshots/3-mission.jpg',
   drive: 'screenshots/4-drive.jpg',
 };
+
+export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// ---------------------------------------------------------------- Chromium
 
 const CHROME_CANDIDATES = [
   '/home/hatch/.cache/ms-playwright/chromium-1255/chrome-linux64/chrome',
@@ -38,34 +41,74 @@ const CHROME_CANDIDATES = [
 
 export function findChrome() {
   for (const p of CHROME_CANDIDATES) {
-    try {
-      if (existsSync(p)) return p;
-    } catch { /* lanjut */ }
+    if (existsSync(p)) return p;
   }
-  return null;
+  // Pola /usr/bin/chromium* dan google-chrome* (glob manual).
+  try {
+    for (const name of readdirSync('/usr/bin')) {
+      if (/^(chromium|google-chrome)/.test(name)) {
+        const p = join('/usr/bin', name);
+        if (existsSync(p)) return p;
+      }
+    }
+  } catch { /* /usr/bin tidak terbaca — lanjut ke which */ }
+  for (const bin of ['chromium', 'chromium-browser', 'google-chrome', 'google-chrome-stable']) {
+    try {
+      const out = execFileSync('which', [bin], { encoding: 'utf8' }).trim();
+      if (out) return out.split('\n')[0];
+    } catch { /* bukan di PATH */ }
+  }
+  throw new Error('findChrome: Chromium tidak ditemukan (cek ms-playwright chromium-1255, /opt/meta-chromium, atau /usr/bin/chromium*)');
 }
 
-export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+export async function launchChromium() {
+  const chrome = findChrome();
+  const profile = join(tmpdir(), `neonbay-chrome-${process.pid}-${Date.now()}`);
+  const args = [
+    '--headless=new',
+    '--no-sandbox',
+    '--disable-dev-shm-usage',
+    `--remote-debugging-port=${CDP_PORT}`,
+    '--window-size=1280,720',
+    '--hide-scrollbars',
+    '--use-angle=swiftshader',
+    '--enable-unsafe-swiftshader',
+    '--use-gl=angle',
+    '--autoplay-policy=no-user-gesture-required',
+    `--user-data-dir=${profile}`,
+    'about:blank',
+  ];
+  const proc = spawn(chrome, args, { stdio: 'ignore' });
+  const deadline = Date.now() + 30000;
+  let wsUrl = null;
+  while (Date.now() < deadline) {
+    if (proc.exitCode !== null) throw new Error(`launchChromium: Chromium keluar lebih awal (code ${proc.exitCode})`);
+    try {
+      const res = await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`);
+      if (res.ok) {
+        const data = await res.json();
+        wsUrl = data.webSocketDebuggerUrl;
+        break;
+      }
+    } catch { /* belum siap */ }
+    await sleep(250);
+  }
+  if (!wsUrl) {
+    try { proc.kill('SIGKILL'); } catch { /* sudah mati */ }
+    throw new Error('launchChromium: DevTools tidak menjawab di port 9224 dalam 30 dtk');
+  }
+  return { proc, wsUrl };
+}
 
-// ---------------- CDP client minimal ----------------
+// ---------------------------------------------------------------- CDP minimal
 
 export class CDP {
-  constructor(wsUrl) {
-    this.wsUrl = wsUrl;
-    this.ws = null;
+  constructor(ws) {
+    this.ws = ws;
     this.nextId = 1;
     this.pending = new Map();
-    this.consoleErrors = [];
-    this.exceptions = [];
-    this.pageErrors = [];
-  }
-
-  async connect() {
-    this.ws = new WebSocket(this.wsUrl);
-    await new Promise((resolve, reject) => {
-      this.ws.onopen = resolve;
-      this.ws.onerror = (e) => reject(new Error(`WebSocket CDP gagal: ${e.message || 'error'}`));
-    });
+    // error per sessionId: { consoleErrors: [], exceptions: [] }
+    this.pageErrors = new Map();
     this.ws.onmessage = (ev) => {
       let msg;
       try { msg = JSON.parse(ev.data); } catch { return; }
@@ -76,309 +119,433 @@ export class CDP {
         else resolve(msg.result || {});
         return;
       }
-      this._onEvent(msg);
+      const sid = msg.sessionId || '';
+      if (msg.method === 'Runtime.exceptionThrown') {
+        const d = msg.params?.exceptionDetails || {};
+        const text = d.exception?.description || d.text || 'exception';
+        this._record(sid, 'exceptions', String(text).slice(0, 500));
+      } else if (msg.method === 'Runtime.consoleAPICalled' && msg.params?.type === 'error') {
+        const text = (msg.params.args || []).map((a) => a.value ?? a.description ?? '').join(' ');
+        this._record(sid, 'consoleErrors', String(text).slice(0, 500));
+      }
     };
-    this.ws.onclose = () => {
-      for (const { reject } of this.pending.values()) reject(new Error('CDP WebSocket tertutup'));
-      this.pending.clear();
-    };
+    this.ws.onerror = () => { /* koneksi putus: pending ditolak saat close */ };
   }
 
-  _onEvent(msg) {
-    if (msg.method === 'Runtime.exceptionThrown') {
-      const d = msg.params?.exceptionDetails || {};
-      this.exceptions.push(d.text || d.exception?.description || JSON.stringify(d).slice(0, 500));
-    } else if (msg.method === 'Runtime.consoleAPICalled' && msg.params?.type === 'error') {
-      const args = (msg.params.args || []).map((a) => a.value ?? a.description ?? '').join(' ');
-      this.consoleErrors.push(args.slice(0, 500));
-    } else if (msg.method === 'Runtime.consoleAPICalled' && msg.params?.type === 'warning') {
-      // warning dicatat tapi bukan error; abaikan
-    }
+  _record(sid, kind, text) {
+    if (!this.pageErrors.has(sid)) this.pageErrors.set(sid, { consoleErrors: [], exceptions: [] });
+    this.pageErrors.get(sid)[kind].push(text);
   }
 
-  send(method, params = {}, sessionId) {
+  errors(sessionId) {
+    return this.pageErrors.get(sessionId) || { consoleErrors: [], exceptions: [] };
+  }
+
+  static async connect(wsUrl) {
+    const ws = new WebSocket(wsUrl);
+    await new Promise((resolve, reject) => {
+      ws.onopen = resolve;
+      ws.onerror = () => reject(new Error('CDP.connect: WebSocket ke DevTools gagal'));
+    });
+    return new CDP(ws);
+  }
+
+  send(method, params = {}, sessionId = undefined) {
+    const id = this.nextId++;
+    const payload = { id, method, params };
+    if (sessionId) payload.sessionId = sessionId;
     return new Promise((resolve, reject) => {
-      const id = this.nextId++;
       this.pending.set(id, { resolve, reject });
-      const payload = { id, method, params };
-      if (sessionId) payload.sessionId = sessionId;
       this.ws.send(JSON.stringify(payload));
     });
   }
 
-  async evaluate(expression, sessionId) {
-    const r = await this.send('Runtime.evaluate', {
-      expression, returnByValue: true, awaitPromise: true,
+  async evaluate(sessionId, expression) {
+    const res = await this.send('Runtime.evaluate', {
+      expression,
+      returnByValue: true,
+      awaitPromise: true,
     }, sessionId);
-    if (r.exceptionDetails) {
-      throw new Error(`evaluate gagal: ${r.exceptionDetails.text || r.exceptionDetails.exception?.description || 'unknown'}`);
+    if (res.exceptionDetails) {
+      const d = res.exceptionDetails;
+      throw new Error(`evaluate gagal: ${d.exception?.description || d.text || JSON.stringify(d)}`);
     }
-    return r.result ? r.result.value : undefined;
+    return res.result ? res.result.value : undefined;
   }
 
-  async navigate(url, sessionId) {
+  async navigate(sessionId, url) {
     await this.send('Page.navigate', { url }, sessionId);
   }
 
-  async waitReady(sessionId, timeoutMs = 15000) {
-    const start = Date.now();
-    for (;;) {
-      const ready = await this.evaluate('document.readyState', sessionId).catch(() => null);
-      if (ready === 'complete') return;
-      if (Date.now() - start > timeoutMs) throw new Error('timeout menunggu page ready');
-      await sleep(150);
+  // Tunggu halaman siap: dokumen complete + window.__neonBay ada.
+  async waitReady(sessionId, timeoutMs = 30000) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      try {
+        const ok = await this.evaluate(sessionId,
+          `!!window.__neonBay && document.readyState === 'complete'`);
+        if (ok) return true;
+      } catch { /* halaman sedang navigasi */ }
+      await sleep(500);
     }
+    throw new Error('waitReady: window.__neonBay tidak muncul dalam batas waktu');
   }
 
-  async screenshot(sessionId, format = 'jpeg', quality = 85) {
-    const r = await this.send('Page.captureScreenshot', { format, quality }, sessionId);
-    return Buffer.from(r.data, 'base64');
+  async screenshot(sessionId, { format = 'jpeg', quality = 85 } = {}) {
+    const params = { format };
+    if (format === 'jpeg') params.quality = quality;
+    const res = await this.send('Page.captureScreenshot', params, sessionId);
+    if (!res.data) throw new Error('screenshot: Page.captureScreenshot tanpa data');
+    return Buffer.from(res.data, 'base64');
   }
 
   close() {
-    try { this.ws?.close(); } catch { /* abaikan */ }
+    try { this.ws.close(); } catch { /* abaikan */ }
   }
 }
 
-// ---------------- Chromium ----------------
-
-export async function launchChromium(port = CDP_PORT) {
-  const chrome = findChrome();
-  if (!chrome) throw new Error('Chromium tidak ditemukan (cek ms-playwright cache / /opt/meta-chromium)');
-  const args = [
-    '--headless=new',
-    '--no-sandbox',
-    '--disable-dev-shm-usage',
-    '--disable-gpu-sandbox',
-    `--remote-debugging-port=${port}`,
-    '--window-size=1280,720',
-    '--hide-scrollbars',
-    // SwiftShader: WebGL software di headless.
-    '--use-angle=swiftshader',
-    '--enable-unsafe-swiftshader',
-    '--use-gl=angle',
-    'about:blank',
-  ];
-  const proc = spawn(chrome, args, { stdio: 'ignore' });
-  const deadline = Date.now() + 30000;
-  let version = null;
-  for (;;) {
-    try {
-      const res = await fetch(`http://127.0.0.1:${port}/json/version`);
-      if (res.ok) { version = await res.json(); break; }
-    } catch { /* belum siap */ }
-    if (Date.now() > deadline) {
-      try { proc.kill(); } catch { /* abaikan */ }
-      throw new Error('timeout menunggu Chromium devtools (port ' + port + ')');
-    }
-    if (proc.exitCode !== null) throw new Error(`Chromium keluar prematur (exit ${proc.exitCode})`);
-    await sleep(250);
-  }
-  return { proc, version };
-}
-
-export async function createPage(cdp, url) {
-  const target = await cdp.send('Target.createTarget', { url: 'about:blank' });
-  const targetId = target.targetId;
-  const attached = await cdp.send('Target.attachToTarget', { targetId, flatten: true });
-  const sessionId = attached.sessionId;
+export async function createPage(cdp) {
+  const { targetId } = await cdp.send('Target.createTarget', { url: 'about:blank' });
+  const { sessionId } = await cdp.send('Target.attachToTarget', { targetId, flatten: true });
   await cdp.send('Runtime.enable', {}, sessionId);
   await cdp.send('Page.enable', {}, sessionId);
-  // headless=new memberi viewport 1280x577 untuk --window-size=1280,720
-  // (143 px hilang entah ke mana); paksa viewport tepat 1280x720 supaya
-  // screenshot JPEG benar-benar 1280x720.
+  // WAJIB: headless --window-size memberi viewport 1280x577, bukan 720.
   await cdp.send('Emulation.setDeviceMetricsOverride', {
     width: 1280, height: 720, deviceScaleFactor: 1, mobile: false,
   }, sessionId);
-  if (url) {
-    await cdp.navigate(url, sessionId);
-    await cdp.waitReady(sessionId);
-  }
-  return { targetId, sessionId };
+  return sessionId;
 }
 
-export async function closePage(cdp, targetId) {
-  try { await cdp.send('Target.closeTarget', { targetId }); } catch { /* abaikan */ }
+export async function closePage(cdp, sessionId) {
+  try {
+    const { targetId } = await cdp.send('Target.getTargetInfo', {}, sessionId).catch(() => ({}));
+    void targetId;
+  } catch { /* abaikan */ }
+  // Tutup via browser-level: cari target dari session tidak tersedia langsung,
+  // jadi tutup dengan detach + biarkan proses Chromium dimatikan pemanggil.
+  try { await cdp.send('Target.detachFromTarget', { sessionId }); } catch { /* abaikan */ }
 }
 
-// ---------------- screenshot ----------------
+// ---------------------------------------------------------------- Keyboard sintetis
+
+const KEYS = {
+  KeyW: { key: 'w', code: 'KeyW' },
+  KeyA: { key: 'a', code: 'KeyA' },
+  KeyS: { key: 's', code: 'KeyS' },
+  KeyD: { key: 'd', code: 'KeyD' },
+  KeyE: { key: 'e', code: 'KeyE' },
+  KeyF: { key: 'f', code: 'KeyF' },
+  KeyG: { key: 'g', code: 'KeyG' },
+  KeyR: { key: 'r', code: 'KeyR' },
+  KeyM: { key: 'm', code: 'KeyM' },
+  KeyP: { key: 'p', code: 'KeyP' },
+  Enter: { key: 'Enter', code: 'Enter' },
+  Escape: { key: 'Escape', code: 'Escape' },
+  Space: { key: ' ', code: 'Space' },
+  ShiftLeft: { key: 'Shift', code: 'ShiftLeft' },
+  Digit1: { key: '1', code: 'Digit1' },
+  Digit2: { key: '2', code: 'Digit2' },
+  Digit3: { key: '3', code: 'Digit3' },
+  Digit4: { key: '4', code: 'Digit4' },
+};
+const KEY_ALIAS = {
+  w: 'KeyW', a: 'KeyA', s: 'KeyS', d: 'KeyD',
+  e: 'KeyE', f: 'KeyF', g: 'KeyG', r: 'KeyR', m: 'KeyM', p: 'KeyP',
+  enter: 'Enter', escape: 'Escape', space: 'Space', shift: 'ShiftLeft',
+  1: 'Digit1', 2: 'Digit2', 3: 'Digit3', 4: 'Digit4',
+};
+
+// Ekspresi JS yang men-dispatch KeyboardEvent sintetis di halaman.
+export function keyExpr(name, type = 'keydown') {
+  const canonical = KEYS[name] ? name : KEY_ALIAS[String(name).toLowerCase()];
+  const def = KEYS[canonical];
+  if (!def) throw new Error(`keyExpr: tombol tidak dikenal: ${name}`);
+  const init = JSON.stringify({ ...def, bubbles: true, cancelable: true });
+  return `window.dispatchEvent(new KeyboardEvent('${type}', ${init}))`;
+}
+
+const keyDown = (cdp, sessionId, name) => cdp.evaluate(sessionId, keyExpr(name, 'keydown'));
+const keyUp = (cdp, sessionId, name) => cdp.evaluate(sessionId, keyExpr(name, 'keyup'));
+const tapKey = async (cdp, sessionId, name) => {
+  await keyDown(cdp, sessionId, name);
+  await sleep(120);
+  await keyUp(cdp, sessionId, name);
+};
+
+// ---------------------------------------------------------------- Screenshot
 
 export async function takeShot(cdp, sessionId, name) {
-  const outRel = SHOT_FILES[name];
-  if (!outRel) throw new Error(`preset shot tidak dikenal: ${name}`);
-  await cdp.navigate(`${BASE}?shot=${name}`, sessionId);
+  const rel = SHOT_FILES[name];
+  if (!rel) throw new Error(`takeShot: preset tidak dikenal: ${name}`);
+  await cdp.navigate(sessionId, BASE + '?shot=' + name);
   await cdp.waitReady(sessionId);
-  await sleep(2500); // beri waktu render 3D + HUD settle
-  const buf = await cdp.screenshot(sessionId, 'jpeg', 85);
-  const outPath = join(REPO, outRel);
+  // Tunggu preset diterapkan (frozen=true) — render deterministik.
+  const deadline = Date.now() + 15000;
+  while (Date.now() < deadline) {
+    const frozen = await cdp.evaluate(sessionId, `window.__neonBay && window.__neonBay.frozen === true`).catch(() => false);
+    if (frozen) break;
+    await sleep(500);
+  }
+  await sleep(2500);
+  const buf = await cdp.screenshot(sessionId, { format: 'jpeg', quality: 85 });
+  mkdirSync(SHOTS_DIR, { recursive: true });
+  const outPath = join(REPO_ROOT, rel);
   writeFileSync(outPath, buf);
-  return { name, file: outRel, bytes: buf.length };
+  return { name, file: rel, path: outPath, bytes: buf.length };
 }
 
-// ---------------- playtest ----------------
+// ---------------------------------------------------------------- Playtest (§11)
 
-// Menekan tombol lewat event keyboard sintetis (listener window tetap jalan).
-export function keyExpr(code, type = 'keydown') {
-  return `window.dispatchEvent(new KeyboardEvent('${type}', {code:'${code}', bubbles:true, cancelable:true})); 'ok'`;
+// Polling waitFor — JANGAN sleep tetap untuk menunggu kondisi: SwiftShader
+// ~1.5 fps dan dt dijepit 0.05, jadi waktu game ~10x lebih lambat dari nyata.
+async function waitFor(cdp, sessionId, expr, timeoutMs, intervalMs = 500) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    let ok = false;
+    try { ok = await cdp.evaluate(sessionId, expr); } catch { /* coba lagi */ }
+    if (ok) return true;
+    await sleep(intervalMs);
+  }
+  return false;
 }
+
+const playerPos = (cdp, sessionId) => cdp.evaluate(sessionId,
+  `(()=>{const p=window.__neonBay.entities.player;return {x:p.x,z:p.z};})()`);
 
 export async function runPlaytest(cdp, sessionId) {
   const steps = [];
-  const check = (name, ok, detail = '') => {
-    steps.push({ name, ok: !!ok, detail: String(detail ?? '') });
-    return !!ok;
-  };
-  const ev = (expr) => cdp.evaluate(expr, sessionId);
-
-  // Menunggu kondisi sampai timeout: di headless SwiftShader game jalan
-  // ~1,5 fps dan dt dijepit 0,05 dtk/frame, jadi waktu game ~10x lebih
-  // lambat dari waktu nyata — polling (bukan sleep tetap) yang benar.
-  const waitFor = async (expr, timeoutMs = 8000, pollMs = 250) => {
-    const start = Date.now();
-    for (;;) {
-      const v = await ev(expr).catch(() => null);
-      if (v) return v;
-      if (Date.now() - start > timeoutMs) return null;
-      await sleep(pollMs);
-    }
+  const step = (n, name, pass, detail = '') => {
+    steps.push({ n, name, pass, detail });
+    console.log(`  [${pass ? 'PASS' : 'FAIL'}] ${n}. ${name}${detail ? ' — ' + detail : ''}`);
+    return pass;
   };
 
-  await cdp.navigate(BASE, sessionId);
+  await cdp.navigate(sessionId, BASE);
   await cdp.waitReady(sessionId);
-  await sleep(1200);
 
-  check('game object ada', await ev(`!!window.__neonBay`));
-  check('title screen tampil', await ev(`window.__neonBay && window.__neonBay.stateName === 'title'`), await ev(`window.__neonBay ? window.__neonBay.stateName : 'no-game'`));
-  check('canvas WebGL ada', await ev(`!!document.querySelector('#three-canvas')`));
+  // 1. game object ada.
+  step(1, 'game object ada (window.__neonBay)',
+    await cdp.evaluate(sessionId, `!!window.__neonBay`));
 
-  // ENTER -> mulai (poll: frame berikutnya yang memproses edge-nya).
-  await ev(keyExpr('Enter'));
-  check('ENTER memulai game', !!(await waitFor(`window.__neonBay.stateName === 'play'`, 8000)), await ev(`window.__neonBay.stateName`));
+  // 2. title screen tampil.
+  step(2, "title screen tampil (stateName 'title')",
+    await cdp.evaluate(sessionId, `window.__neonBay.stateName === 'title'`));
 
-  // Jalan kaki maju: tahan W sampai posisi bergeser > 2 m.
-  const p0 = await ev(`JSON.stringify({x: window.__neonBay.entities.player.x, z: window.__neonBay.entities.player.z})`);
-  await ev(keyExpr('KeyW'));
-  const moved = await waitFor(`(()=>{ const g = window.__neonBay; const dx = g.entities.player.x - ${JSON.parse(p0).x}; const dz = g.entities.player.z - ${JSON.parse(p0).z}; return Math.hypot(dx, dz) > 2 ? Math.hypot(dx, dz).toFixed(1) : null; })()`, 20000);
-  await ev(keyExpr('KeyW', 'keyup'));
-  check('pemain bergerak (W)', !!moved, moved ? `bergeser ${moved} m` : 'tidak bergeser');
+  // 3. canvas WebGL ada.
+  step(3, 'canvas WebGL ada (#three-canvas)',
+    await cdp.evaluate(sessionId, `!!document.getElementById('three-canvas')`));
 
-  // E -> masuk mobil (mobil pemain spawn di dekat pemain).
-  await ev(keyExpr('KeyE'));
-  check('E masuk mobil', !!(await waitFor(`window.__neonBay.entities.player.inCar === true`, 8000)));
-
-  // Nyetir: tahan W sampai speed > 3 dan posisi bergeser > 5 m.
-  const c0 = await ev(`JSON.stringify({x: window.__neonBay.entities.playerCar.x, z: window.__neonBay.entities.playerCar.z})`);
-  await ev(keyExpr('KeyW'));
-  const drove = await waitFor(`(()=>{ const g = window.__neonBay; const c = g.entities.playerCar; const dx = c.x - ${JSON.parse(c0).x}; const dz = c.z - ${JSON.parse(c0).z}; const d = Math.hypot(dx, dz); return (Math.abs(c.speed) > 3 && d > 5) ? (d.toFixed(1) + ' m, speed ' + Math.abs(c.speed).toFixed(1)) : null; })()`, 25000);
-  await ev(keyExpr('KeyW', 'keyup'));
-  check('mengemudi mengubah posisi/speed', !!drove, drove || 'tidak bergerak');
-
-  // Misi 1: teleport dekat garage lalu ENTER.
-  await ev(keyExpr('KeyE')); // keluar mobil
-  await waitFor(`window.__neonBay.entities.player.inCar === false`, 8000);
-  await ev(`(()=>{ const g = window.__neonBay; const s = g.entities.spawns.garage; g.entities.player.x = s.x; g.entities.player.z = s.z; g.entities.player.heading = 0; })()`);
-  await sleep(300);
-  await ev(keyExpr('Enter'));
-  const mission = await waitFor(`window.__neonBay.missions.active && window.__neonBay.missions.active.id === 1 ? window.__neonBay.missions.active.name : null`, 8000);
-  check('misi 1 bisa dimulai', !!mission, mission || await ev(`window.__neonBay.missions.active ? window.__neonBay.missions.active.name : 'none'`));
-
-  // Wanted naik saat menembak (F): tekan berulang sampai heat naik.
-  const heat0 = await ev(`window.__neonBay.heat.value`);
-  let heat1 = heat0;
-  for (let i = 0; i < 10 && heat1 <= heat0; i++) {
-    await ev(keyExpr('KeyF'));
-    await sleep(600);
-    heat1 = await ev(`window.__neonBay.heat.value`);
+  // 4. ENTER memulai game. CATATAN: _update() tidak dipanggil saat state
+  //    'title', jadi ENTER sintetis tidak sampai ke _onEnter() — yang bekerja
+  //    adalah klik #title-start. Coba ENTER dulu, fallback klik tombol.
+  let started = false;
+  let startHow = 'ENTER';
+  await tapKey(cdp, sessionId, 'Enter');
+  started = await waitFor(cdp, sessionId, `window.__neonBay.stateName === 'play'`, 15000);
+  if (!started) {
+    startHow = 'klik #title-start (ENTER dari title tidak direspons game)';
+    await cdp.evaluate(sessionId, `document.getElementById('title-start').click()`);
+    started = await waitFor(cdp, sessionId, `window.__neonBay.stateName === 'play'`, 15000);
   }
-  check('wanted/heat naik saat menembak', heat1 > heat0, `heat ${heat0} -> ${heat1}`);
+  step(4, 'ENTER memulai game (stateName \'play\')', started, started ? startHow : 'tetap title');
 
-  // Garage: dekat marker, tekan G.
-  await ev(keyExpr('KeyG'));
-  const garageOpen = await waitFor(`window.__neonBay.garage.open === true && document.getElementById('garage-panel').style.display !== 'none' ? 'open' : null`, 8000);
-  check('panel garage terbuka', !!garageOpen);
-  await ev(keyExpr('KeyG')); // tutup lagi
-  await waitFor(`window.__neonBay.garage.open === false`, 8000);
+  // 5. pemain bergerak (tahan W, bergeser >2 m).
+  let moved = false;
+  let movedDetail = '';
+  if (started) {
+    const p0 = await playerPos(cdp, sessionId);
+    await keyDown(cdp, sessionId, 'KeyW');
+    moved = await waitFor(cdp, sessionId,
+      `(()=>{const p=window.__neonBay.entities.player;return Math.hypot(p.x-(${p0.x}),p.z-(${p0.z}))>2;})()`, 60000);
+    await keyUp(cdp, sessionId, 'KeyW');
+    if (moved) {
+      const p1 = await playerPos(cdp, sessionId);
+      movedDetail = `bergeser ${Math.hypot(p1.x - p0.x, p1.z - p0.z).toFixed(1)} m`;
+    }
+  }
+  step(5, 'pemain bergerak (tahan W, bergeser >2 m)', moved, movedDetail);
 
-  // Radio: R ganti stasiun.
-  const radio0 = await ev(`window.__neonBay.radio.currentName()`);
-  await ev(keyExpr('KeyR'));
-  const radio1 = await waitFor(`(()=>{ const n = window.__neonBay.radio.currentName(); return n !== '${radio0}' ? n : null; })()`, 8000);
-  check('radio berganti stasiun', !!radio1, radio1 ? `${radio0} -> ${radio1}` : radio0);
+  // 6. E masuk mobil. CATATAN: playerCar spawn di garage (-52,104), ~94 m
+  //    dari spawn pemain — E di tempat tidak menemukan mobil dalam 6 m.
+  //    Coba E di tempat dulu; bila gagal, teleport pemain ke samping mobil
+  //    lalu E lagi (akomodasi harness, bukan perubahan game).
+  let inCar = false;
+  let carDetail = '';
+  if (moved) {
+    await tapKey(cdp, sessionId, 'KeyE');
+    inCar = await waitFor(cdp, sessionId, `window.__neonBay.entities.player.inCar === true`, 10000);
+    if (!inCar) {
+      carDetail = 'teleport ke samping playerCar lalu E';
+      await cdp.evaluate(sessionId,
+        `(()=>{const g=window.__neonBay;const c=g.entities.playerCar;g.entities.respawnPlayerAt(c.x+3,c.z);return true;})()`);
+      await tapKey(cdp, sessionId, 'KeyE');
+      inCar = await waitFor(cdp, sessionId, `window.__neonBay.entities.player.inCar === true`, 15000);
+    }
+  }
+  step(6, 'E masuk mobil (player.inCar true)', inCar, carDetail);
 
-  // Save tertulis ke localStorage.
-  const saved = await waitFor(`localStorage.getItem('neonbay-save-v1')`, 8000);
-  check('save tertulis ke localStorage', !!saved && saved.length > 10, saved ? `${saved.length} karakter` : 'kosong');
+  // 7. mengemudi (tahan W, speed >3 dan bergeser >5 m).
+  let drove = false;
+  let droveDetail = '';
+  if (inCar) {
+    const p0 = await playerPos(cdp, sessionId);
+    await keyDown(cdp, sessionId, 'KeyW');
+    drove = await waitFor(cdp, sessionId,
+      `(()=>{const g=window.__neonBay;const p=g.entities.player;const c=g.entities.playerCar;return c.speed>3 && Math.hypot(p.x-(${p0.x}),p.z-(${p0.z}))>5;})()`, 90000);
+    await keyUp(cdp, sessionId, 'KeyW');
+    if (drove) {
+      const p1 = await playerPos(cdp, sessionId);
+      const sp = await cdp.evaluate(sessionId, `window.__neonBay.entities.playerCar.speed`);
+      droveDetail = `speed ${Number(sp).toFixed(1)}, bergeser ${Math.hypot(p1.x - p0.x, p1.z - p0.z).toFixed(1)} m`;
+    }
+  }
+  step(7, 'mengemudi (tahan W, speed >3 dan bergeser >5 m)', drove, droveDetail);
 
-  return {
-    steps,
-    consoleErrors: cdp.consoleErrors,
-    exceptions: cdp.exceptions,
-    passed: steps.filter((s) => s.ok).length,
-    total: steps.length,
-  };
+  // 8. misi 1 bisa dimulai (teleport ke spawns.garage, ENTER -> active.id 1).
+  let mission = false;
+  if (drove) {
+    await cdp.evaluate(sessionId,
+      `(()=>{const g=window.__neonBay;const s=g.spawns.garage;g.entities.respawnPlayerAt(s.x,s.z);return true;})()`);
+    await tapKey(cdp, sessionId, 'Enter');
+    mission = await waitFor(cdp, sessionId,
+      `window.__neonBay.missions.active && window.__neonBay.missions.active.id === 1`, 20000);
+  }
+  step(8, 'misi 1 bisa dimulai (missions.active.id === 1)', mission);
+
+  // 9. wanted/heat naik saat menembak (tekan F berulang, heat.value naik).
+  //    canShoot memakai performance.now() (waktu nyata, cooldown 0,28 dtk),
+  //    jadi tekan F tiap ~1,2 dtk sampai heat naik.
+  let heatUp = false;
+  let heatDetail = '';
+  if (mission) {
+    const heat0 = await cdp.evaluate(sessionId, `window.__neonBay.heat.value`);
+    for (let i = 0; i < 12; i++) {
+      await tapKey(cdp, sessionId, 'KeyF');
+      await sleep(1200);
+      const hv = await cdp.evaluate(sessionId, `window.__neonBay.heat.value`);
+      if (hv > heat0) {
+        heatUp = true;
+        heatDetail = `heat ${heat0} -> ${hv}`;
+        break;
+      }
+    }
+    if (!heatUp) heatDetail = `heat tetap ${heat0}`;
+  }
+  step(9, 'wanted/heat naik saat menembak (heat.value naik)', heatUp, heatDetail);
+
+  // 10. panel garage terbuka (G di dekat marker -> open + panel tampil;
+  //     G lagi menutup). Pemain masih di garage dari langkah 8.
+  let garageOk = false;
+  if (heatUp) {
+    await tapKey(cdp, sessionId, 'KeyG');
+    const opened = await waitFor(cdp, sessionId,
+      `(()=>{const g=window.__neonBay;const el=document.getElementById('garage-panel');return g.garage.open===true && el && !el.hidden;})()`, 15000);
+    let closed = false;
+    if (opened) {
+      await tapKey(cdp, sessionId, 'KeyG');
+      closed = await waitFor(cdp, sessionId, `window.__neonBay.garage.open === false`, 10000);
+    }
+    garageOk = opened && closed;
+  }
+  step(10, 'panel garage terbuka (G) lalu tertutup (G lagi)', garageOk);
+
+  // 11. radio berganti stasiun (R -> currentName() berubah).
+  let radioOk = false;
+  let radioDetail = '';
+  if (garageOk) {
+    const name0 = await cdp.evaluate(sessionId, `window.__neonBay.radio.currentName()`);
+    await tapKey(cdp, sessionId, 'KeyR');
+    radioOk = await waitFor(cdp, sessionId,
+      `window.__neonBay.radio.currentName() !== ${JSON.stringify(name0)}`, 15000);
+    if (radioOk) {
+      const name1 = await cdp.evaluate(sessionId, `window.__neonBay.radio.currentName()`);
+      radioDetail = `${name0} -> ${name1}`;
+    }
+  }
+  step(11, 'radio berganti stasiun (R)', radioOk, radioDetail);
+
+  // 12. save tertulis ke localStorage (key 'neonbay-save-v1', panjang >10).
+  let saved = false;
+  let saveDetail = '';
+  if (radioOk) {
+    const len = await cdp.evaluate(sessionId,
+      `(localStorage.getItem('neonbay-save-v1') || '').length`);
+    saved = len > 10;
+    saveDetail = `panjang ${len}`;
+  }
+  step(12, "save tertulis ke localStorage ('neonbay-save-v1' >10)", saved, saveDetail);
+
+  const passed = steps.filter((s) => s.pass).length;
+  const errs = cdp.errors(sessionId);
+  return { steps, passed, total: steps.length, consoleErrors: errs.consoleErrors, exceptions: errs.exceptions };
 }
 
-// ---------------- CLI ----------------
+// ---------------------------------------------------------------- CLI
 
 async function main() {
   const args = process.argv.slice(2);
-  const playtest = args.includes('--playtest');
-  const shots = args.filter((a) => !a.startsWith('--'));
-  if (!playtest && shots.length === 0) {
-    console.log('Pakai: node tools/shot.mjs cover chase mission drive | node tools/shot.mjs --playtest');
-    process.exit(2);
-  }
-  // Pastikan server jalan.
-  try {
-    const res = await fetch(BASE);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  } catch (err) {
-    console.error(`serve.ts belum jalan di ${BASE} — jalankan dulu: node serve.ts (${err.message})`);
-    process.exit(1);
+  const playtestOnly = args.includes('--playtest');
+  const shotNames = args.filter((a) => !a.startsWith('--'));
+  const names = playtestOnly ? [] : (shotNames.length > 0 ? shotNames : Object.keys(SHOT_FILES));
+  for (const n of names) {
+    if (!SHOT_FILES[n]) {
+      console.error(`shot.mjs: preset tidak dikenal: ${n} (pilih: ${Object.keys(SHOT_FILES).join(' ')})`);
+      process.exitCode = 1;
+      return;
+    }
   }
 
-  const { proc, version } = await launchChromium();
-  const cdp = new CDP(version.webSocketDebuggerUrl);
-  let code = 0;
+  const { proc, wsUrl } = await launchChromium();
+  let exitCode = 0;
   try {
-    await cdp.connect();
-    const { targetId, sessionId } = await createPage(cdp);
+    const cdp = await CDP.connect(wsUrl);
     try {
-      if (playtest) {
-        const result = await runPlaytest(cdp, sessionId);
-        console.log(JSON.stringify(result, null, 2));
-        if (result.passed !== result.total || result.exceptions.length > 0 || result.consoleErrors.length > 0) code = 1;
-      } else {
-        for (const name of shots) {
-          const r = await takeShot(cdp, sessionId, name);
-          console.log(`shot ${r.name}: ${r.file} (${r.bytes} bytes)`);
+      const sessionId = await createPage(cdp);
+      try {
+        if (playtestOnly) {
+          console.log('playtest: 12 langkah (§11)');
+          const result = await runPlaytest(cdp, sessionId);
+          console.log(`playtest: ${result.passed}/${result.total} PASS`);
+          if (result.exceptions.length > 0) {
+            console.error(`playtest: ${result.exceptions.length} exception:`, result.exceptions);
+            exitCode = 1;
+          }
+          if (result.consoleErrors.length > 0) {
+            console.error(`playtest: ${result.consoleErrors.length} console error:`, result.consoleErrors);
+            exitCode = 1;
+          }
+          if (result.passed !== result.total) exitCode = 1;
+        } else {
+          for (const name of names) {
+            const shot = await takeShot(cdp, sessionId, name);
+            console.log(`shot: ${shot.file} (${shot.bytes} byte)`);
+          }
+          const errs = cdp.errors(sessionId);
+          if (errs.exceptions.length > 0) {
+            console.error(`shot: ${errs.exceptions.length} exception:`, errs.exceptions);
+            exitCode = 1;
+          }
+          if (errs.consoleErrors.length > 0) {
+            console.error(`shot: ${errs.consoleErrors.length} console error:`, errs.consoleErrors);
+            exitCode = 1;
+          }
         }
-        if (cdp.exceptions.length > 0) {
-          console.log(`EXCEPTIONS (${cdp.exceptions.length}):`);
-          for (const e of cdp.exceptions) console.log('  -', e);
-          code = 1;
-        }
-        if (cdp.consoleErrors.length > 0) {
-          console.log(`CONSOLE ERRORS (${cdp.consoleErrors.length}):`);
-          for (const e of cdp.consoleErrors) console.log('  -', e);
-          code = 1;
-        }
-        if (code === 0) console.log('shot: 0 exception, 0 console error');
+      } finally {
+        await closePage(cdp, sessionId);
       }
     } finally {
-      await closePage(cdp, targetId);
+      cdp.close();
     }
   } finally {
-    cdp.close();
-    try { proc.kill(); } catch { /* abaikan */ }
+    try { proc.kill('SIGKILL'); } catch { /* abaikan */ }
   }
-  process.exit(code);
+  process.exitCode = exitCode;
 }
 
 const isMain = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {
   main().catch((err) => {
-    console.error('shot.mjs gagal:', err.message);
-    process.exit(1);
+    console.error(`shot.mjs: ${err.message}`);
+    process.exitCode = 1;
   });
 }

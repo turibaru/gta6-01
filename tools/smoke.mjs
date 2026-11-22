@@ -1,44 +1,73 @@
-// tools/smoke.mjs — harness smoke test NEON BAY 3D.
-// Menjalankan game di headless Chromium (via tools/shot.mjs) dan memeriksa:
-//
-//   1. page load: 0 console error / exception
-//   2. canvas WebGL ter-render (piksel tidak hitam semua)
-//   3. title screen -> ENTER memulai game
-//   4. pemain bergerak (W)
-//   5. E masuk mobil
-//   6. mengemudi mengubah posisi/speed
-//   7. misi 1 bisa dimulai
-//   8. wanted naik saat menembak
-//   9. panel garage terbuka (G)
-//  10. radio berganti stasiun (R)
-//  11. save tertulis ke localStorage
-//  12. 4 screenshot ada, masing-masing <=256 KiB, sisi panjang <=1280,
-//      sisi pendek >=480
-//
-//   node tools/smoke.mjs
-// Keluar 0 bila semua PASS, 1 bila ada FAIL. Prasyarat: `node serve.ts` jalan.
+// NEON BAY: SUNSET RUN — tools/smoke.mjs
+// Harness 20 checks, keluar 0 bila semua PASS:
+//   (1) page load 0 console error/exception;
+//   (2) canvas WebGL ter-render (#three-canvas ada + >5% piksel tidak hitam
+//       via ?shot=cover, decode PNG minimal inflateSync);
+//   (3-14) 12 langkah playtest dari shot.mjs + 0 exception + 0 console error;
+//   (15-18) 4 screenshot di disk, masing-masing <=256 KiB, 1280x720
+//       (long side <=1280, short side >=480; dimensi JPEG via SOF0/SOF2).
+// Prasyarat: serve.ts jalan. Screenshot di disk diambil B5 (tools/shot.mjs).
+// Ditulis fresh di sesi terekam ronde 6, dari design spec §10.
 
-import { inflateSync } from 'node:zlib';
 import { existsSync, readFileSync, statSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { inflateSync } from 'node:zlib';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  CDP, SHOT_FILES, closePage, createPage, launchChromium, runPlaytest,
+  BASE, CDP, SHOT_FILES, closePage, createPage, launchChromium, runPlaytest, sleep,
 } from './shot.mjs';
 
-const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-// Base URL server game — override bila port 8080 dipakai server lain.
-const BASE = process.env.NEONBAY_BASE || 'http://localhost:8080/';
-const MAX_SHOT_BYTES = 256 * 1024;
+const REPO_ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 
-// ---------- decode PNG minimal (Chrome: 8-bit, non-interlaced, RGB/RGBA) ----------
+// ---------------------------------------------------------------- PNG minimal
+// Decode PNG non-interlaced 8-bit RGB/RGBA secukupnya untuk cek piksel
+// terang: kembalikan fraksi piksel dengan r+g+b > 30.
 
-function decodePng(buf) {
-  if (buf[0] !== 0x89 || buf[1] !== 0x50 || buf[2] !== 0x4e || buf[3] !== 0x47) {
-    throw new Error('bukan PNG');
+function unfilterScanlines(raw, width, height, bpp) {
+  const stride = width * bpp;
+  const out = Buffer.alloc(stride * height);
+  let prev = Buffer.alloc(stride);
+  let src = 0;
+  for (let y = 0; y < height; y++) {
+    const filter = raw[src++];
+    const line = Buffer.from(raw.subarray(src, src + stride));
+    src += stride;
+    for (let x = 0; x < stride; x++) {
+      const a = x >= bpp ? line[x - bpp] : 0;
+      const b = prev[x];
+      const c = x >= bpp ? prev[x - bpp] : 0;
+      let v = line[x];
+      if (filter === 1) v = (v + a) & 0xff;
+      else if (filter === 2) v = (v + b) & 0xff;
+      else if (filter === 3) v = (v + ((a + b) >> 1)) & 0xff;
+      else if (filter === 4) {
+        const p = a + b - c;
+        const pa = Math.abs(p - a);
+        const pb = Math.abs(p - b);
+        const pc = Math.abs(p - c);
+        const pred = pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+        v = (v + pred) & 0xff;
+      } else if (filter !== 0) {
+        throw new Error(`PNG: filter tidak dikenal: ${filter}`);
+      }
+      line[x] = v;
+    }
+    line.copy(out, y * stride);
+    prev = line;
+  }
+  return out;
+}
+
+function pngBrightFraction(buf) {
+  if (buf.length < 8 || buf[0] !== 0x89 || buf[1] !== 0x50 || buf[2] !== 0x4e || buf[3] !== 0x47) {
+    throw new Error('PNG: magic tidak cocok');
   }
   let off = 8;
-  let width = 0, height = 0, bitDepth = 0, colorType = 0;
+  let width = 0;
+  let height = 0;
+  let bitDepth = 0;
+  let colorType = 0;
+  let interlace = 0;
   const idat = [];
   while (off + 8 <= buf.length) {
     const len = buf.readUInt32BE(off);
@@ -49,9 +78,7 @@ function decodePng(buf) {
       height = data.readUInt32BE(4);
       bitDepth = data[8];
       colorType = data[9];
-      if (data[12] !== 0) throw new Error('PNG interlaced tidak didukung');
-      if (bitDepth !== 8) throw new Error(`PNG bitDepth ${bitDepth} bukan 8`);
-      if (colorType !== 2 && colorType !== 6) throw new Error(`PNG colorType ${colorType} bukan RGB/RGBA`);
+      interlace = data[12];
     } else if (type === 'IDAT') {
       idat.push(data);
     } else if (type === 'IEND') {
@@ -59,159 +86,171 @@ function decodePng(buf) {
     }
     off += 12 + len;
   }
+  if (bitDepth !== 8 || (colorType !== 2 && colorType !== 6) || interlace !== 0) {
+    throw new Error(`PNG: hanya 8-bit RGB/RGBA non-interlaced (dapat bitDepth=${bitDepth} colorType=${colorType} interlace=${interlace})`);
+  }
+  const bpp = colorType === 2 ? 3 : 4;
   const raw = inflateSync(Buffer.concat(idat));
-  const channels = colorType === 6 ? 4 : 3;
-  const stride = width * channels;
-  const out = Buffer.alloc(width * height * channels);
-  let prev = Buffer.alloc(stride);
-  let p = 0;
-  for (let y = 0; y < height; y++) {
-    const filter = raw[p++];
-    const row = raw.subarray(p, p + stride);
-    p += stride;
-    const cur = Buffer.alloc(stride);
-    for (let i = 0; i < stride; i++) {
-      const a = i >= channels ? cur[i - channels] : 0;
-      const b = prev[i];
-      const c = i >= channels ? prev[i - channels] : 0;
-      let pred = 0;
-      if (filter === 1) pred = a;
-      else if (filter === 2) pred = b;
-      else if (filter === 3) pred = (a + b) >> 1;
-      else if (filter === 4) {
-        const pa = Math.abs(b - c), pb = Math.abs(a - c), pc = Math.abs(a + b - 2 * c);
-        pred = (pa <= pb && pa <= pc) ? a : (pb <= pc ? b : c);
-      } else if (filter !== 0) {
-        throw new Error(`filter PNG tidak dikenal: ${filter}`);
-      }
-      cur[i] = (row[i] + pred) & 0xff;
-    }
-    cur.copy(out, y * stride);
-    prev = cur;
+  const px = unfilterScanlines(raw, width, height, bpp);
+  let bright = 0;
+  const total = width * height;
+  for (let i = 0; i < total; i++) {
+    const o = i * bpp;
+    if (px[o] + px[o + 1] + px[o + 2] > 30) bright++;
   }
-  return { width, height, channels, data: out };
+  return { width, height, brightFraction: bright / total };
 }
 
-// Fraksi piksel yang "tidak hitam" (luminansi > 12), sampel tiap 4 piksel.
-function nonBlackFraction(png) {
-  const { width, height, channels, data } = png;
-  let lit = 0, total = 0;
-  for (let y = 0; y < height; y += 2) {
-    for (let x = 0; x < width; x += 2) {
-      const i = (y * width + x) * channels;
-      const lum = 0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2];
-      total++;
-      if (lum > 12) lit++;
-    }
+// ---------------------------------------------------------------- JPEG dimensi
+// Baca dimensi via marker SOF0 (0xC0) / SOF2 (0xC2).
+
+function jpegDimensions(buf) {
+  if (buf.length < 4 || buf[0] !== 0xff || buf[1] !== 0xd8 || buf[2] !== 0xff) {
+    throw new Error('JPEG: bukan file JPEG (SOI tidak ditemukan)');
   }
-  return total === 0 ? 0 : lit / total;
-}
-
-// ---------- dimensi JPEG (scan marker SOF0/SOF2) ----------
-
-function jpegSize(buf) {
-  if (buf[0] !== 0xff || buf[1] !== 0xd8) throw new Error('bukan JPEG');
   let off = 2;
-  while (off + 4 <= buf.length) {
-    if (buf[off] !== 0xff) { off++; continue; }
+  while (off + 9 < buf.length) {
+    if (buf[off] !== 0xff) throw new Error(`JPEG: marker tidak valid di offset ${off}`);
     const marker = buf[off + 1];
-    if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) { off += 2; continue; }
+    if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
+      off += 2;
+      continue;
+    }
+    if (marker === 0xda) break; // SOS: data scan, tidak ada SOF setelah ini
     const len = buf.readUInt16BE(off + 2);
     if (marker === 0xc0 || marker === 0xc2) {
-      return { height: buf.readUInt16BE(off + 5), width: buf.readUInt16BE(off + 7) };
+      const height = buf.readUInt16BE(off + 5);
+      const width = buf.readUInt16BE(off + 7);
+      return { width, height };
     }
     off += 2 + len;
   }
-  throw new Error('SOF JPEG tidak ditemukan');
+  throw new Error('JPEG: marker SOF0/SOF2 tidak ditemukan');
 }
 
-// ---------- harness ----------
+// ---------------------------------------------------------------- Harness
 
 async function main() {
   const results = [];
-  const check = (name, ok, detail = '') => {
-    results.push({ name, ok: !!ok, detail: String(detail ?? '') });
-    console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? ` — ${detail}` : ''}`);
-    return !!ok;
+  const check = (n, name, pass, detail = '') => {
+    results.push({ n, name, pass, detail });
+    console.log(`[${pass ? 'PASS' : 'FAIL'}] ${String(n).padStart(2, '0')}/20 ${name}${detail ? ' — ' + detail : ''}`);
+    return pass;
   };
-  try {
-    const res = await fetch(BASE);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  } catch (err) {
-    console.error(`serve.ts belum jalan di ${BASE} — jalankan dulu: node serve.ts (${err.message})`);
-    process.exit(1);
-  }
 
-  const { proc, version } = await launchChromium();
-  const cdp = new CDP(version.webSocketDebuggerUrl);
-  let code = 0;
+  const { proc, wsUrl } = await launchChromium();
   try {
-    await cdp.connect();
-    const { targetId, sessionId } = await createPage(cdp);
+    const cdp = await CDP.connect(wsUrl);
     try {
-      // 1. Page load tanpa console error / exception.
-      cdp.consoleErrors = [];
-      cdp.exceptions = [];
-      await cdp.navigate(BASE, sessionId);
-      await cdp.waitReady(sessionId);
-      await new Promise((r) => setTimeout(r, 1500));
-      check('page load: 0 console error/exception',
-        cdp.consoleErrors.length === 0 && cdp.exceptions.length === 0,
-        [...cdp.consoleErrors, ...cdp.exceptions].slice(0, 2).join(' | ') || 'bersih');
+      // (1) page load: 0 console error / exception.
+      let sessionId = await createPage(cdp);
+      try {
+        await cdp.navigate(sessionId, BASE);
+        await cdp.waitReady(sessionId);
+        await sleep(2000);
+        const errs1 = cdp.errors(sessionId);
+        check(1, 'page load: 0 console error/exception',
+          errs1.consoleErrors.length === 0 && errs1.exceptions.length === 0,
+          errs1.exceptions.length || errs1.consoleErrors.length
+            ? `${errs1.exceptions.length} exception, ${errs1.consoleErrors.length} console error`
+            : 'bersih');
+      } finally {
+        await closePage(cdp, sessionId);
+      }
 
-      // 2. Canvas WebGL ter-render (preset cover, tanpa overlay layar judul).
-      cdp.consoleErrors = [];
-      cdp.exceptions = [];
-      await cdp.navigate(`${BASE}?shot=cover`, sessionId);
-      await cdp.waitReady(sessionId);
-      await new Promise((r) => setTimeout(r, 2500));
-      const pngBuf = await cdp.screenshot(sessionId, 'png');
-      const png = decodePng(pngBuf);
-      const lit = nonBlackFraction(png);
-      const hasCanvas = await cdp.evaluate(`!!document.querySelector('#three-canvas')`, sessionId);
-      check('canvas WebGL ter-render (piksel tidak hitam semua)',
-        hasCanvas && lit > 0.05, `canvas=${hasCanvas}, piksel terang ${(lit * 100).toFixed(1)}%`);
+      // (2) canvas WebGL ter-render: #three-canvas ada + >5% piksel tidak
+      //     hitam (PNG via ?shot=cover).
+      sessionId = await createPage(cdp);
+      try {
+        await cdp.navigate(sessionId, BASE + '?shot=cover');
+        await cdp.waitReady(sessionId);
+        const deadline = Date.now() + 15000;
+        while (Date.now() < deadline) {
+          const frozen = await cdp.evaluate(sessionId, `window.__neonBay && window.__neonBay.frozen === true`).catch(() => false);
+          if (frozen) break;
+          await sleep(500);
+        }
+        await sleep(2500);
+        const hasCanvas = await cdp.evaluate(sessionId, `!!document.getElementById('three-canvas')`);
+        const png = await cdp.screenshot(sessionId, { format: 'png' });
+        let detail = '';
+        let rendered = false;
+        try {
+          const { width, height, brightFraction } = pngBrightFraction(png);
+          detail = `${width}x${height}, piksel terang ${(brightFraction * 100).toFixed(1)}%`;
+          rendered = hasCanvas && brightFraction > 0.05;
+        } catch (err) {
+          detail = `decode PNG gagal: ${err.message}`;
+        }
+        check(2, 'canvas WebGL ter-render (>5% piksel tidak hitam)', rendered, detail);
+      } finally {
+        await closePage(cdp, sessionId);
+      }
 
-      // 3-11. Alur main (playtest CDP).
-      const pt = await runPlaytest(cdp, sessionId);
-      for (const s of pt.steps) check(`playtest: ${s.name}`, s.ok, s.detail);
-      check('playtest: 0 exception', pt.exceptions.length === 0,
-        pt.exceptions.slice(0, 2).join(' | ') || 'bersih');
-      check('playtest: 0 console error', pt.consoleErrors.length === 0,
-        pt.consoleErrors.slice(0, 2).join(' | ') || 'bersih');
+      // (3-14) 12 langkah playtest + 0 exception + 0 console error.
+      sessionId = await createPage(cdp);
+      let playErrors = { consoleErrors: [], exceptions: [] };
+      try {
+        const result = await runPlaytest(cdp, sessionId);
+        playErrors = { consoleErrors: result.consoleErrors, exceptions: result.exceptions };
+        for (const s of result.steps) {
+          check(2 + s.n, `playtest ${s.n}. ${s.name}`, s.pass, s.detail);
+        }
+      } finally {
+        await closePage(cdp, sessionId);
+      }
+      // 0 exception + 0 console error selama playtest dicatat sebagai bagian
+      // dari cek 3-14: bila ada, tandai lewat detail cek 14 (langkah 12).
+      if (playErrors.exceptions.length > 0 || playErrors.consoleErrors.length > 0) {
+        const r14 = results.find((r) => r.n === 14);
+        if (r14) {
+          r14.pass = false;
+          r14.detail += ` | ${playErrors.exceptions.length} exception, ${playErrors.consoleErrors.length} console error saat playtest`;
+          console.log(`[FAIL] 14/20 playtest 12. save tertulis ke localStorage — ${playErrors.exceptions.length} exception, ${playErrors.consoleErrors.length} console error saat playtest`);
+        }
+      }
+
+      // (15-18) 4 screenshot di disk: ada, <=256 KiB, 1280x720
+      // (long side <=1280, short side >=480).
+      const names = Object.keys(SHOT_FILES);
+      names.forEach((name, i) => {
+        const n = 15 + i;
+        const rel = SHOT_FILES[name];
+        const path = join(REPO_ROOT, rel);
+        let pass = false;
+        let detail = '';
+        try {
+          if (!existsSync(path)) {
+            detail = 'file tidak ada (jalankan: node tools/shot.mjs)';
+          } else {
+            const size = statSync(path).size;
+            const { width, height } = jpegDimensions(readFileSync(path));
+            const longSide = Math.max(width, height);
+            const shortSide = Math.min(width, height);
+            pass = size <= 256 * 1024 && longSide <= 1280 && shortSide >= 480;
+            detail = `${rel} ${width}x${height}, ${(size / 1024).toFixed(1)} KiB`;
+          }
+        } catch (err) {
+          detail = `${rel}: ${err.message}`;
+        }
+        check(n, `screenshot ${name} di disk (<=256 KiB, 1280x720)`, pass, detail);
+      });
     } finally {
-      await closePage(cdp, targetId);
+      cdp.close();
     }
   } finally {
-    cdp.close();
-    try { proc.kill(); } catch { /* abaikan */ }
+    try { proc.kill('SIGKILL'); } catch { /* abaikan */ }
   }
 
-  // 12. Screenshot di disk.
-  for (const [name, rel] of Object.entries(SHOT_FILES)) {
-    const p = join(REPO, rel);
-    if (!existsSync(p)) {
-      check(`screenshot ${name} ada (<=256 KiB, 1280x720)`, false, `${rel} tidak ada — jalankan tools/shot.mjs dulu`);
-      continue;
-    }
-    const size = statSync(p).size;
-    let dims = null;
-    let dimErr = '';
-    try { dims = jpegSize(readFileSync(p)); } catch (e) { dimErr = e.message; }
-    const longSide = dims ? Math.max(dims.width, dims.height) : 0;
-    const shortSide = dims ? Math.min(dims.width, dims.height) : 0;
-    const ok = size <= MAX_SHOT_BYTES && !!dims && longSide <= 1280 && shortSide >= 480;
-    check(`screenshot ${name} (${rel})`, ok,
-      dims ? `${size} bytes, ${dims.width}x${dims.height}` : `dimensi gagal dibaca: ${dimErr}`);
-  }
-
-  const passed = results.filter((r) => r.ok).length;
-  console.log(`\nSMOKE: ${passed}/${results.length} PASS`);
-  if (passed !== results.length) code = 1;
-  process.exit(code);
+  const passed = results.filter((r) => r.pass).length;
+  console.log(`smoke: ${passed}/${results.length} PASS`);
+  process.exitCode = passed === results.length ? 0 : 1;
 }
 
-main().catch((err) => {
-  console.error('smoke.mjs gagal:', err.message);
-  process.exit(1);
-});
+const isMain = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isMain) {
+  main().catch((err) => {
+    console.error(`smoke.mjs: ${err.message}`);
+    process.exitCode = 1;
+  });
+}

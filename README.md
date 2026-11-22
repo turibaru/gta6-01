@@ -6,75 +6,135 @@ Dibuat untuk bounty [gta6-01 di make.fun](https://make.fun/bounty/gta6-01) — g
 
 # NEON BAY: SUNSET RUN — 3D
 
-Game aksi open-world 3D di kota pantai fiktif Neon Bay saat golden hour.
-Bantu Mira & Rico menyelesaikan 7 job kru, kabur dari NBPD, dan kuasai
-Neon Strip sebelum matahari tenggelam. Kota orisinal — bukan GTA.
+Open-world crime 3D di kota pantai fiktif **Neon Bay** saat golden hour. Bantu kru
+Mira & Rico menyelesaikan **7 story job** berurutan, kabur dari polisi NBPD
+(wanted 0–5 bintang, cruiser + roadblock + heli AIR-1), lalu free-roam di kota
+yang tidak pernah tidur.
 
-Dibangun dengan three.js (vendored di `game/vendor/`) + JavaScript murni,
-tanpa aset eksternal: semua suara disintesis WebAudio, semua visual
-dibangun dari geometri prosedural.
+Kota ini orisinal — bukan GTA, tanpa nama, logo, atau aset Rockstar. Semua
+visual geometri prosedural (three.js r128, vendored), semua suara disintesis
+WebAudio, tanpa aset eksternal dan tanpa request jaringan saat bermain.
 
-## Cara main
+## Kontrol
 
-| Kontrol | Aksi |
-|---|---|
-| W A S D / panah | Gerak / nyetir |
+| Tombol | Aksi |
+| --- | --- |
+| WASD / panah | Gerak (jalan kaki / nyetir) |
 | SHIFT | Lari / ngebut |
 | E | Masuk / keluar mobil |
 | SPASI | Rem tangan (drift) |
 | F / klik mouse | Tembak |
-| 1–4 | Ganti senjata (Pistol, Scatter, SMG, Tinju) |
+| 1–4 | Ganti senjata (pistol, scatter, SMG, tinju) |
 | R | Ganti stasiun radio |
-| G | Garasi (dekat marker garage) |
+| G | Buka garasi (di dekat marker garage) |
 | P / ESC | Jeda |
 | M | Mute |
-| ENTER | Mulai job di marker garage / lanjut |
+| ENTER | Mulai game / mulai job di marker garage / lanjut dialog |
 
-Sistem: 7 story job berurutan (pickup, delivery, escape, shootout,
-balapan, heist, finale), wanted 0–5 bintang (cruiser, roadblock, heli),
-garasi (engine/repair/paint), respect rank, radio synth 3 stasiun,
-dialog kru, save otomatis ke localStorage.
+## Sistem
 
-## Menjalankan lokal
+- **7 job berurutan** — pickup, delivery, kabur dari kejaran, baku tembak di
+  pier, balapan jalanan 2 lap, heist arcade, dan finale Golden Hour Getaway.
+  Selesaikan job 7 untuk meraih rank **NEON LEGEND** + free-roam.
+- **Wanted 0–5 bintang** — curi mobil, tabrak pejalan kaki, dan menembak
+  menaikkan heat; bersembunyi di hideout atau menjauh dari polisi untuk
+  mendinginkannya. Busted / wasted kena denda dan respawn di garage.
+- **Garasi** — upgrade mesin (3 level), repair, dan ganti cat mobil
+  (8 warna). Dibuka dengan G di dekat marker garage.
+- **Respect** — naik tiap job selesai: Rookie → Hustler → Wheelman → Kingpin
+  → Neon Legend.
+- **Radio 3 stasiun** — NEON 99.1 (synthwave), OMBO 98.4 (bass groove),
+  VICE FM (chill pads). Musik sequencer WebAudio, tanpa file audio.
+- **Dialog & briefing** — Mira & Rico memandu tiap job lewat kartu dialog.
+- **Save otomatis** — progress (uang, job, respect, garasi, cat) tersimpan di
+  `localStorage` (`neonbay-save-v1`).
+
+## Cara jalan lokal
 
 ```sh
 node serve.ts
 # buka http://localhost:8080/
 ```
 
-Screenshot deterministik (untuk `shots.json`):
+Game jalan offline dari file statis di bawah `game/` — cukup server file
+statis apa pun yang menyajikan folder itu.
+
+## Screenshot & smoke test
+
+Screenshot adalah render asli kode game di headless Chromium (bukan
+edit/komposit). Ambil keempatnya (perlu `serve.ts` jalan):
 
 ```sh
 node tools/shot.mjs cover chase mission drive
-node tools/smoke.mjs   # harness smoke test (harus semua PASS)
+# atau satu-satu: node tools/shot.mjs cover
 ```
 
-Build dossier (entrypoint):
+Playtest otomatis 12 langkah (§11 spec):
+
+```sh
+node tools/shot.mjs --playtest
+```
+
+Smoke test 20 checks (load, render WebGL, playtest, dimensi screenshot):
+
+```sh
+node tools/smoke.mjs
+```
+
+## Build dossier
 
 ```sh
 MAKEFUN_OUTPUT_DIR=out node main.ts
-# -> out/dossier.json + out/game/ + out/screenshots/
+# -> out/dossier.json (+ salinan game/ dan screenshots/)
 ```
+
+`main.ts` memakai Node 22 stdlib saja dan `buildDossier` dari
+`vendor/makefun-game.ts` (file kit). Tanpa `MAKEFUN_OUTPUT_DIR`, output
+ditulis ke `/output`.
 
 ## Struktur file
 
-```
-main.ts            entrypoint build dossier (Node 22 stdlib only)
-serve.ts           server statis lokal (localhost:8080)
-shots.json         daftar 4 scene screenshot
-tools/shot.mjs     driver screenshot + playtest (headless Chromium via CDP)
-tools/smoke.mjs    harness smoke test
-game/index.html    halaman game + HUD
-game/src/          logika game (ES module)
-  main.js          boot, loop, state machine, HUD, minimap
-  render.js        renderer three.js, kamera chase, beacon, heli
-  world.js         kota prosedural 480x480 (jalan, gedung, pantai, pier)
-  entities.js      pemain, mobil, lalu lintas, pejalan kaki, polisi
-  missions.js      7 story job
-  wanted.js heat.js  sistem wanted / heat
-  weapons.js garage.js respect.js radio.js  sistem gameplay
-  dialog.js audio.js rivals.js visuals.js beacon.js dressing.js
-  input.js config.js shots.js
-game/vendor/three.min.js   three.js r128 (vendored)
-screenshots/       4 render asli game (1280x720 JPEG)
+```text
+.
+├── main.ts                  # entrypoint dossier (node main.ts)
+├── serve.ts                 # server file statis dev (node serve.ts)
+├── shots.json               # metadata 4 screenshot
+├── README.md
+├── LICENSE
+├── .makefun/
+│   └── owner.json           # wallet pemilik entry
+├── vendor/
+│   └── makefun-game.ts      # file kit make.fun (jangan diubah)
+├── game/
+│   ├── index.html           # halaman game + HUD
+│   ├── vendor/
+│   │   └── three.min.js     # three.js r128 (vendored)
+│   └── src/
+│       ├── main.js          # game utama, loop, state, save
+│       ├── config.js        # konstanta gameplay
+│       ├── world.js         # kota, jalan, distrik, spawn
+│       ├── render.js        # renderer three.js, kamera, minimap
+│       ├── entities.js      # pemain, mobil, traffic, pejalan kaki, polisi
+│       ├── heat.js          # wanted / heat 0–5 bintang
+│       ├── weapons.js       # 4 senjata
+│       ├── rivals.js        # rival baku tembak & balapan
+│       ├── missions.js      # 7 story job
+│       ├── input.js         # keyboard + mouse
+│       ├── dialog.js        # dialog & briefing
+│       ├── audio.js         # SFX WebAudio (sintesis)
+│       ├── radio.js         # 3 stasiun radio (sequencer WebAudio)
+│       ├── garage.js        # upgrade, repair, cat
+│       ├── respect.js       # rank respect
+│       ├── beacon.js        # beacon misi
+│       ├── dressing.js      # detail kota (lampu, rambu, bangku)
+│       ├── visuals.js       # muzzle flash, asap, percikan
+│       └── shots.js         # preset screenshot ?shot=<nama>
+├── screenshots/
+│   ├── 1-cover.jpg
+│   ├── 2-chase.jpg
+│   ├── 3-mission.jpg
+│   └── 4-drive.jpg
+└── tools/
+    ├── shot.mjs             # driver screenshot + playtest (CDP)
+    └── smoke.mjs            # harness 20 checks
 ```

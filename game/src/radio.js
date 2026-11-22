@@ -1,61 +1,157 @@
-// radio.js — tiga stasiun radio synth (WebAudio, tanpa aset).
-// R ganti stasiun, M mute (ditangani main.js lewat AudioSys).
-// Nama stasiun tampil di pill HUD (hud-radio).
+// NEON BAY: SUNSET RUN — radio.js
+// Radio 3 stasiun: sequencer WebAudio per stasiun (bpm/wave/root/scale/bass
+// dari RADIO_STATIONS). currentName() bekerja meski audio suspended.
+// Ditulis fresh di sesi terekam ronde 6, dari design spec §3 + §5.
 
 import { RADIO_STATIONS } from './config.js';
 
-const SEMITONE = (n) => Math.pow(2, n / 12);
-
 export class Radio {
-  constructor(audio) {
-    this.audio = audio;
-    this.stations = RADIO_STATIONS;
+  constructor(audioSys = null) {
+    this.audioSys = audioSys;
     this.index = 0;
     this.playing = false;
+    this._timer = null;
     this._step = 0;
     this._nextTime = 0;
+    this._ctx = null; // context sendiri bila tanpa audioSys
+    this._master = null;
+    this._gesture = false;
+    this._onGesture = () => { this._gesture = true; };
+    window.addEventListener('pointerdown', this._onGesture);
+    window.addEventListener('keydown', this._onGesture);
   }
 
-  current() { return this.stations[this.index]; }
-  currentName() { return this.current().name; }
+  get stations() {
+    return RADIO_STATIONS;
+  }
+
+  currentName() {
+    const st = RADIO_STATIONS[this.index % RADIO_STATIONS.length];
+    return st ? st.name : 'RADIO';
+  }
+
+  currentStation() {
+    return RADIO_STATIONS[this.index % RADIO_STATIONS.length];
+  }
 
   next() {
-    this.index = (this.index + 1) % this.stations.length;
+    this.index = (this.index + 1) % RADIO_STATIONS.length;
     this._step = 0;
-    return this.current();
+    if (this.playing) {
+      this._nextTime = 0;
+      this._restartScheduler();
+    }
+    return this.currentName();
   }
 
-  setPlaying(p) { this.playing = !!p; }
+  setPlaying(b) {
+    const want = !!b;
+    if (want === this.playing && this._timer) return;
+    this.playing = want;
+    if (want) this._startScheduler();
+    else this._stopScheduler();
+  }
 
-  // Dipanggil tiap frame; menjadwalkan not arpeggio/bass sesuai BPM stasiun.
-  update(dt) {
-    if (!this.playing || !this.audio || this.audio.muted) return;
-    const ctx = this.audio.ensure();
-    if (!ctx) return;
-    const st = this.current();
-    const stepDur = 60 / st.bpm / 2; // not seperdelapan
-    const now = ctx.currentTime;
-    if (this._nextTime < now) this._nextTime = now + 0.05;
-    let guard = 0;
-    while (this._nextTime < now + 0.12 && guard < 8) {
-      guard++;
-      const when = this._nextTime - now;
-      const scale = st.scale;
-      const deg = scale[this._step % scale.length] + 12 * Math.floor(this._step / scale.length) % 24;
-      const freq = st.root * SEMITONE(deg);
-      // Melodi arpeggio.
-      this.audio.tone(freq, stepDur * 1.8, st.wave, 0.07, when);
-      // Bass tiap 2 langkah (stasiun bass) atau tiap 4 langkah (chill).
-      if (st.bass ? this._step % 2 === 0 : this._step % 4 === 0) {
-        this.audio.tone(st.root / 2, stepDur * 3, 'sine', 0.12, when);
-      }
-      // Pad akor tiap 8 langkah untuk VICE FM.
-      if (!st.bass && this._step % 8 === 0) {
-        this.audio.tone(st.root * SEMITONE(4), stepDur * 8, 'triangle', 0.05, when);
-        this.audio.tone(st.root * SEMITONE(7), stepDur * 8, 'triangle', 0.05, when);
-      }
-      this._step++;
-      this._nextTime += stepDur;
+  _ctxOf() {
+    if (this.audioSys) {
+      const ctx = this.audioSys.ensureCtx ? this.audioSys.ensureCtx() : this.audioSys.ctx;
+      return { ctx, master: this.audioSys.master || null, muted: !!this.audioSys.muted };
     }
+    if (!this._ctx) {
+      try {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return { ctx: null, master: null, muted: false };
+        this._ctx = new AC();
+        this._master = this._ctx.createGain();
+        this._master.gain.value = 0.4;
+        this._master.connect(this._ctx.destination);
+      } catch (err) {
+        return { ctx: null, master: null, muted: false };
+      }
+    }
+    return { ctx: this._ctx, master: this._master, muted: false };
+  }
+
+  _startScheduler() {
+    this._stopScheduler();
+    this._step = 0;
+    this._nextTime = 0;
+    this._timer = setInterval(() => this._tick(), 90);
+  }
+
+  _restartScheduler() {
+    this._startScheduler();
+  }
+
+  _stopScheduler() {
+    if (this._timer) {
+      clearInterval(this._timer);
+      this._timer = null;
+    }
+  }
+
+  _tick() {
+    try {
+      if (!this.playing) return;
+      const { ctx, master, muted } = this._ctxOf();
+      if (!ctx || !master) return;
+      if (this.audioSys && this.audioSys.resume) this.audioSys.resume();
+      else if (ctx.state === 'suspended') {
+        const p = ctx.resume();
+        if (p && p.catch) p.catch(() => {});
+      }
+      // Bila masih suspended, majukan jadwal tanpa bunyi (tanpa backlog).
+      if (ctx.state !== 'running') {
+        this._nextTime = Math.max(this._nextTime, ctx.currentTime + 0.1);
+        return;
+      }
+      if (this._nextTime < ctx.currentTime - 0.05) this._nextTime = ctx.currentTime + 0.05;
+      while (this._nextTime < ctx.currentTime + 0.28) {
+        if (!muted) this._scheduleStep(ctx, master, this._nextTime, this._step);
+        const st = this.currentStation();
+        this._nextTime += 60 / st.bpm / 4;
+        this._step += 1;
+      }
+    } catch (err) { /* sequencer tidak pernah throw */ }
+  }
+
+  _scheduleStep(ctx, master, t0, step) {
+    try {
+      const st = this.currentStation();
+      const semi = (deg) => st.root * Math.pow(2, deg / 12);
+      const scale = st.scale;
+      // Pola arp deterministik 16 langkah (ulang tiap bar).
+      const arp = [0, 2, 1, 3, 2, 4, 3, 5, 4, 2, 5, 3, 6, 4, 2, 1];
+      const degIdx = arp[step % 16] % scale.length;
+      const note = semi(scale[degIdx]);
+      const beat = step % 4 === 0;
+      // Lead: tiap langkah genap, lebih keras di ketukan.
+      if (step % 2 === 0) {
+        this._note(ctx, master, note * 2, t0, 60 / st.bpm / 4 * 0.9, st.wave, beat ? 0.05 : 0.03);
+      }
+      // Bass: tiap ketukan bila stasiun punya bass.
+      if (st.bass && beat) {
+        this._note(ctx, master, semi(0) / 2, t0, 60 / st.bpm / 2, 'sine', 0.09);
+      }
+      // Pad lembut tiap awal bar untuk VICE FM.
+      if (!st.bass && step % 16 === 0) {
+        this._note(ctx, master, semi(scale[0]), t0, 60 / st.bpm * 4, 'triangle', 0.04);
+        this._note(ctx, master, semi(scale[2]), t0, 60 / st.bpm * 4, 'triangle', 0.03);
+      }
+    } catch (err) { /* abaikan */ }
+  }
+
+  _note(ctx, master, freq, t0, dur, type, gain) {
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    osc.type = type || 'sawtooth';
+    osc.frequency.value = freq;
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(Math.max(0.0001, gain), t0 + 0.015);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    osc.connect(g);
+    g.connect(master);
+    osc.start(t0);
+    osc.stop(t0 + dur + 0.05);
   }
 }

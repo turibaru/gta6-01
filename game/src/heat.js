@@ -1,43 +1,68 @@
-// heat.js — nilai heat 0..100 di balik wanted 0–5 bintang.
-// Kejahatan menaikkan heat; heat turun bila pemain menjauh dari polisi
-// atau bersembunyi (hideout) cukup lama. 1 bintang = 20 heat.
+// NEON BAY: SUNSET RUN — heat.js
+// Wanted / heat 0-5 bintang. Naik karena aksi kriminal, turun bila jauh dari
+// polisi atau bersembunyi di hideout. Busted & wasted ditangani main.js —
+// Heat hanya menyediakan value/stars, decay, dan jumlah polisi yang diminta.
+// Ditulis fresh di sesi terekam ronde 6, dari design spec §3 dan §5.
 
 import { CONFIG, clamp } from './config.js';
 
 export class Heat {
   constructor() {
     this.value = 0;
-    this.hiddenTimer = 0; // detik pemain terus-menerus bersembunyi
   }
 
-  add(n) { this.value = clamp(this.value + n, 0, CONFIG.heatMax); }
-  set(n) { this.value = clamp(n, 0, CONFIG.heatMax); }
-  setStars(stars) {
-    // stars() = floor(value/20)+1 (value>0): 1 bintang = 1..19, ...,
-    // 5 bintang = 80..100. Jadi setStars(n) = (n-1)*20+1, bukan n*20+1
-    // (yang lama memberi n+1 bintang: setStars(4) -> 5 bintang).
-    if (stars <= 0) { this.value = 0; return; }
-    this.value = clamp(stars - 1, 0, 4) * CONFIG.heatPerStar + 1;
-  }
-  clear() { this.value = 0; this.hiddenTimer = 0; }
-
-  stars() {
-    if (this.value <= 0) return 0;
-    return clamp(Math.floor(this.value / CONFIG.heatPerStar) + 1, 1, 5);
+  get stars() {
+    return Math.floor(this.value / CONFIG.heatPerStar);
   }
 
-  // dt detik; hidden = pemain di hideout / jauh dari semua polisi.
-  // nearestCopDist = jarak polisi terdekat (Infinity bila tak ada).
-  update(dt, hidden, nearestCopDist = Infinity) {
-    if (this.value <= 0) return;
-    if (hidden) {
-      this.hiddenTimer += dt;
-      const rate = CONFIG.heatDecayHiddenPerSec + Math.min(6, this.hiddenTimer);
-      this.value = Math.max(0, this.value - rate * dt);
-    } else {
-      this.hiddenTimer = 0;
-      // Heat hanya turun bila polisi terdekat cukup jauh.
-      if (nearestCopDist > 90) this.value = Math.max(0, this.value - CONFIG.heatDecayPerSec * dt);
+  // Set langsung ke n bintang (value = n * 20).
+  setStars(n) {
+    this.value = clamp(Math.floor(n) * CONFIG.heatPerStar, 0, CONFIG.heatMax);
+  }
+
+  clear() {
+    this.value = 0;
+  }
+
+  add(n) {
+    this.value = clamp(this.value + n, 0, CONFIG.heatMax);
+    return this.value;
+  }
+
+  // Pemicu naik (nilai dari CONFIG).
+  onStealCar() { return this.add(CONFIG.heatStealCar); }
+  onHitPed() { return this.add(CONFIG.heatHitPed); }
+  onShoot() { return this.add(CONFIG.heatShoot); }
+  onSpeedingNearCop() { return this.add(CONFIG.heatSpeedingNearCop); }
+
+  // Jumlah cruiser yang diminta wanted saat ini (maks 4).
+  policeCount() {
+    return Math.min(this.stars, CONFIG.policeCountMax);
+  }
+
+  wantRoadblock() {
+    return this.stars >= 3;
+  }
+
+  wantHeli() {
+    return this.stars >= 4;
+  }
+
+  // Decay tiap frame. nearCop: ada polisi dalam jarak dekat; inHideout:
+  // pemain berada di radius hideout. Di hideout heat reda jauh lebih cepat.
+  decay(dt, nearCop, inHideout) {
+    if (dt <= 0) return this.value;
+    if (inHideout) {
+      this.value = Math.max(0, this.value - CONFIG.heatDecayHiddenPerSec * dt);
+    } else if (!nearCop) {
+      this.value = Math.max(0, this.value - CONFIG.heatDecayPerSec * dt);
     }
+    return this.value;
+  }
+
+  // update(dt, ctx) — bentuk yang dipakai main.js tiap frame.
+  // ctx: { nearCop:boolean, inHideout:boolean }
+  update(dt, ctx = {}) {
+    return this.decay(dt, !!ctx.nearCop, !!ctx.inHideout);
   }
 }

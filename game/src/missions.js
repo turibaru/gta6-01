@@ -1,170 +1,190 @@
-// missions.js — 7 story job Neon Bay.
-// Tiap misi: briefing card (dialog Mira/Rico), beacon pink, timer,
-// objective, payout + respect. ENTER di marker untuk mulai.
-// Misi 1-7 berurutan; selesai misi 7 → rank NEON LEGEND + free-roam.
+// NEON BAY: SUNSET RUN — missions.js
+// 7 story job berurutan + logika stage (goto / escape / kill / channel / race).
+// Ditulis fresh di sesi terekam ronde 6, dari design spec §4.
 
 import { CONFIG, dist2d } from './config.js';
 
 export const MISSION_DEFS = [
   {
-    id: 1, name: 'SUNSET PICKUP', briefer: 'Mira',
+    id: 1, name: 'SUNSET PICKUP', giver: 'Mira', payout: 400, respect: 50,
+    timer: 150, scriptedStars: 0,
     brief: 'Ambil paket Rico di pier, lalu bawa balik ke garage. Jangan telat.',
-    payout: 400, respect: 50, timer: 150,
     stages: [
-      { type: 'goto', label: 'Pergi ke pier, ambil paket Rico', target: 'pier' },
-      { type: 'goto', label: 'Bawa paket kembali ke garage Mira', target: 'garage' },
+      { type: 'goto', target: 'pier', label: 'Ambil paket di pier' },
+      { type: 'goto', target: 'garage', label: 'Bawa paket ke garage' },
     ],
   },
   {
-    id: 2, name: 'NEON DELIVERY', briefer: 'Mira',
+    id: 2, name: 'NEON DELIVERY', giver: 'Mira', payout: 500, respect: 60,
+    timer: 120, scriptedStars: 0,
     brief: 'Antar paket ke arcade di seberang kota. Lalu lintas padat — cari celah.',
-    payout: 500, respect: 60, timer: 120,
-    stages: [{ type: 'goto', label: 'Antar paket ke arcade', target: 'arcade' }],
+    stages: [
+      { type: 'goto', target: 'arcade', label: 'Antar paket ke arcade' },
+    ],
   },
   {
-    id: 3, name: 'HEAT ESCAPE', briefer: 'Rico',
+    id: 3, name: 'HEAT ESCAPE', giver: 'Rico', payout: 600, respect: 70,
+    timer: null, scriptedStars: 3,
     brief: 'NBPD sudah mengendus kita. Kabur ke hideout dan tunggu heat reda sampai 0.',
-    payout: 600, respect: 70, timer: 0, scriptedStars: 3,
-    stages: [{ type: 'escape', label: 'Capai hideout dan hilangkan wanted (0 bintang)', target: 'hideout' }],
+    stages: [
+      { type: 'escape', target: 'hideout', label: 'Kabur ke hideout, heat harus 0' },
+    ],
   },
   {
-    id: 4, name: 'PIER SHOOTOUT', briefer: 'Rico',
+    id: 4, name: 'PIER SHOOTOUT', giver: 'Rico', payout: 700, respect: 80,
+    timer: null, scriptedStars: 0, rivals: 6,
     brief: 'Kru rival menyerang di pier. Kalahkan 6 rival, lalu capai mobil extraction.',
-    payout: 700, respect: 80, timer: 0, rivals: 6,
     stages: [
-      { type: 'kill', label: 'Kalahkan 6 rival di pier (0/6)', target: 'pier', count: 6 },
-      { type: 'goto', label: 'Capai mobil extraction', target: 'extraction' },
+      { type: 'kill', target: 'pier', count: 6, label: 'Kalahkan 6 rival di pier' },
+      { type: 'goto', target: 'extraction', label: 'Capai mobil extraction' },
     ],
   },
   {
-    id: 5, name: 'STREET KINGS', briefer: 'Mira',
+    id: 5, name: 'STREET KINGS', giver: 'Mira', payout: 800, respect: 90,
+    timer: null, scriptedStars: 0, race: true,
     brief: 'Balapan jalanan vs 3 rival, 2 lap sirkuit Strip. Jangan finis terakhir.',
-    payout: 800, respect: 90, timer: 0, race: true,
-    stages: [{ type: 'race', label: 'Menangkan balapan — 2 lap sirkuit Strip', target: 'garage' }],
-  },
-  {
-    id: 6, name: 'ARCADE HEIST', briefer: 'Rico',
-    brief: 'Ambil uang arcade — tahan 10 detik di vault — lalu kabur dengan heat 4 bintang ke hideout.',
-    payout: 1000, respect: 120, timer: 0, scriptedStars: 4,
     stages: [
-      { type: 'channel', label: 'Buka vault arcade — tahan 10 detik di marker', target: 'arcade', channel: 10 },
-      { type: 'escape', label: 'Kabur ke hideout dengan heat 4 bintang', target: 'hideout' },
+      { type: 'race', target: 'strip', label: 'Menangkan balapan 2 lap' },
     ],
   },
   {
-    id: 7, name: 'GOLDEN HOUR GETAWAY', briefer: 'Mira',
+    id: 6, name: 'ARCADE HEIST', giver: 'Rico', payout: 1000, respect: 120,
+    timer: null, scriptedStars: 4, channelSeconds: 10,
+    brief: 'Ambil uang arcade — tahan 10 detik di vault — lalu kabur dengan heat 4 bintang ke hideout.',
+    stages: [
+      { type: 'channel', target: 'arcade', seconds: 10, label: 'Tahan 10 detik di vault arcade' },
+      { type: 'escape', target: 'hideout', label: 'Kabur ke hideout, heat harus 0' },
+    ],
+  },
+  {
+    id: 7, name: 'GOLDEN HOUR GETAWAY', giver: 'Mira', payout: 1500, respect: 150,
+    timer: null, scriptedStars: 5,
     brief: 'Finale. Heat 5 bintang, heli dan roadblock di mana-mana. Capai titik extraction di pantai.',
-    payout: 1500, respect: 150, timer: 0, scriptedStars: 5,
-    stages: [{ type: 'escape', label: 'Capai extraction di pantai — jangan busted', target: 'extraction' }],
+    stages: [
+      { type: 'escape', target: 'extraction', label: 'Capai extraction di pantai' },
+    ],
   },
 ];
 
+// Sirkuit balapan Strip: persegi panjang R=120 (x ±120), W=90 (z ±90), 8 gate.
+export function raceGatesFor() {
+  return [
+    { x: 120, z: 90 }, { x: 0, z: 90 }, { x: -120, z: 90 }, { x: -120, z: 0 },
+    { x: -120, z: -90 }, { x: 0, z: -90 }, { x: 120, z: -90 }, { x: 120, z: 0 },
+  ];
+}
+
 export class Missions {
-  constructor(deps) {
-    this.deps = deps || {};
+  constructor(deps = {}) {
+    this.dialog = deps.dialog || null;
+    this.audio = deps.audio || null;
+    this.heat = deps.heat || null;
+    this.rivals = deps.rivals || null;
+    this.respect = deps.respect || null;
+    this.state = deps.state || { money: 0, jobsDone: 0 };
     this.defs = MISSION_DEFS;
-    this.completed = 0;          // jumlah misi selesai
-    this.active = null;          // def misi aktif
+    this.active = null;
     this.stageIndex = 0;
-    this.timer = 0;
-    this.channelProgress = 0;
-    this.started = false;        // true bila misi aktif sedang berjalan
-    this.available = true;       // false bila semua misi selesai
+    this.started = false;
+    this.timer = null;
+    this.completed = 0;
+    this.channelT = 0;
+    this.playerGate = 0;
+    this.playerLap = 0;
+    this.playerFinished = false;
   }
 
-  nextDef() { return this.defs[this.completed] || null; }
-  currentStage() { return this.active ? this.active.stages[this.stageIndex] : null; }
+  nextDef() {
+    if (this.completed >= this.defs.length) return null;
+    return this.defs[this.completed];
+  }
 
-  // Marker tempat misi berikutnya dimulai (garage Mira).
-  startMarker(spawns) { return spawns?.garage || { x: -12, z: 48 }; }
+  currentStage() {
+    if (!this.active) return null;
+    return this.active.stages[this.stageIndex] || null;
+  }
 
-  // Target stage saat ini sebagai {x,z} dari spawn points.
+  startMarker(spawns) {
+    return spawns.garage;
+  }
+
+  // Titik start balapan (garis start, gate pertama).
+  raceStart() {
+    return { x: 120, z: 90, heading: -Math.PI / 2 };
+  }
+
+  raceGates() {
+    return raceGatesFor();
+  }
+
   stageTarget(spawns) {
     const st = this.currentStage();
-    if (!st || !spawns) return null;
-    return spawns[st.target] || null;
+    if (!st) return null;
+    if (st.type === 'race') return null;
+    const t = spawns[st.target];
+    return t ? { x: t.x, z: t.z } : null;
+  }
+
+  beaconTarget(spawns) {
+    if (!this.active) return null;
+    const st = this.currentStage();
+    if (!st) return null;
+    if (st.type === 'race') {
+      const gates = this.raceGates();
+      return gates[this.playerGate % gates.length];
+    }
+    return this.stageTarget(spawns);
   }
 
   objectiveText() {
     if (!this.active) {
       const next = this.nextDef();
-      return next ? `Job berikutnya: ${next.name} — pergi ke marker garage (ENTER)` : 'Semua job selesai — free-roam Neon Bay!';
+      if (!next) return 'Semua job selesai — free-roam di Neon Bay!';
+      return `Job ${next.id}/7: ${next.name} — pergi ke garage, tekan ENTER.`;
     }
     const st = this.currentStage();
     if (!st) return this.active.name;
+    let text = st.label || this.active.name;
     if (st.type === 'kill') {
-      const done = this.deps?.rivals?.defeatedCount || 0;
-      return `${st.label.replace('(0/6)', `(${done}/${st.count})`)}`;
+      const done = this.rivals ? this.rivals.defeatedCount : 0;
+      text += ` (${done}/${st.count})`;
+    } else if (st.type === 'channel') {
+      const left = Math.max(0, (st.seconds || 10) - this.channelT);
+      text += ` — ${left.toFixed(0)} dtk lagi`;
+    } else if (st.type === 'race') {
+      const pos = this.rivals ? this.rivals.racePosition : 4;
+      text += ` — Lap ${Math.min(this.playerLap + 1, 2)}/2, posisi ${pos}/4`;
     }
-    if (st.type === 'race') {
-      const r = this.deps?.rivals;
-      const lap = r ? r.playerLap + 1 : 1;
-      const pos = r ? r.racePosition : 1;
-      return `Lap ${Math.min(lap, 2)}/2 — posisi ${pos}/4`;
+    if (this.timer !== null && this.timer !== undefined) {
+      text += ` — ${Math.max(0, Math.ceil(this.timer))} dtk`;
     }
-    if (st.type === 'channel') {
-      return `${st.label} (${Math.ceil(Math.max(0, st.channel - this.channelProgress))} dtk)`;
-    }
-    return st.label;
-  }
-
-  // Beacon: posisi target stage aktif (atau marker misi berikutnya bila idle).
-  beaconTarget(spawns) {
-    if (this.active && this.started) return this.stageTarget(spawns);
-    return this.startMarker(spawns);
+    return text;
   }
 
   begin(spawns) {
     const def = this.nextDef();
-    if (!def) return { ok: false, msg: 'Semua job sudah selesai.' };
+    if (!def) return null;
     this.active = def;
     this.stageIndex = 0;
-    this.timer = def.timer || 0;
-    this.channelProgress = 0;
     this.started = true;
-    this.deps?.dialog?.showBriefing(def);
-    this.deps?.audio?.missionStart();
-    if (def.scriptedStars) this.deps?.heat?.setStars?.(def.scriptedStars);
-    if (def.rivals) this.deps?.rivals?.spawnShootout?.(spawns.pier.x, spawns.pier.z, def.rivals);
-    if (def.race) {
-      const gates = this.raceGates(spawns);
-      this.deps?.rivals?.spawnRace?.(gates, spawns.garage.x, spawns.garage.z);
-    }
-    return { ok: true, def };
-  }
-
-  // Sirkuit Strip: persegi panjang di sekitar pusat kota.
-  raceGates() {
-    const R = 120, W = 90;
-    return [
-      { x: 0, z: -R }, { x: W, z: -R }, { x: W, z: 0 }, { x: W, z: R },
-      { x: 0, z: R }, { x: -W, z: R }, { x: -W, z: 0 }, { x: -W, z: -R },
-    ];
-  }
-
-  _advance() {
-    this.stageIndex++;
-    this.channelProgress = 0;
-    if (this.stageIndex >= this.active.stages.length) this._complete();
-  }
-
-  _complete() {
-    const def = this.active;
-    this.completed++;
-    this.active = null;
-    this.started = false;
-    this.stageIndex = 0;
-    this.timer = 0;
-    const state = this.deps?.state;
-    if (state) state.money += def.payout;
-    const rp = this.deps?.respect?.add?.(def.respect);
-    this.deps?.audio?.missionDone();
-    this.deps?.audio?.coin();
-    this.deps?.dialog?.show('Mira', `${def.name} selesai! +$${def.payout}, +${def.respect} RP.${rp?.rankedUp ? ` Rank naik: ${rp.rank}!` : ''}`, 6);
-    if (this.completed >= this.defs.length) {
-      this.available = false;
-      this.deps?.dialog?.queue('Rico', 'NEON LEGEND. Kota ini milikmu sekarang. Free-roam, nikmati sunset-nya.', 8);
-      if (this.deps?.respect) this.deps.respect.points = Math.max(this.deps.respect.points, 1500);
+    this.timer = def.timer !== undefined && def.timer !== null ? def.timer : null;
+    this.channelT = 0;
+    this.playerGate = 0;
+    this.playerLap = 0;
+    this.playerFinished = false;
+    if (this.dialog) this.dialog.showBriefing(def);
+    if (this.audio) this.audio.missionStart();
+    if (this.heat && def.scriptedStars) this.heat.setStars(def.scriptedStars);
+    if (this.rivals) {
+      if (def.rivals) {
+        const pier = spawns.pier;
+        this.rivals.spawnShootout(pier.x, pier.z, def.rivals);
+      } else if (def.race) {
+        const s = this.raceStart();
+        this.rivals.spawnRace(this.raceGates(), s.x, s.z);
+      } else {
+        this.rivals.clear();
+      }
     }
     return def;
   }
@@ -174,69 +194,128 @@ export class Missions {
     this.active = null;
     this.started = false;
     this.stageIndex = 0;
-    this.timer = 0;
-    this.channelProgress = 0;
-    this.deps?.audio?.missionFail();
-    this.deps?.dialog?.show('Mira', `${def.name} gagal: ${reason}. Kembali ke garage untuk coba lagi.`, 6);
-    this.deps?.rivals?.clear?.();
-    return def;
+    this.timer = null;
+    this.channelT = 0;
+    if (this.rivals) this.rivals.clear();
+    if (this.audio) this.audio.missionFail();
+    if (this.dialog) {
+      this.dialog.show('Mira', 'Gagal. Balik ke garage dan coba lagi — kita belum selesai.');
+    }
+    return { type: 'failed', reason: reason || 'failed', def };
   }
 
-  update(dt, player, spawns, ctx) {
-    if (!this.active || !this.started) return null;
+  _complete() {
     const def = this.active;
-    if (def.timer > 0) {
-      this.timer -= dt;
-      if (this.timer <= 0) { this._fail('waktu habis'); return { event: 'failed' }; }
+    this.active = null;
+    this.started = false;
+    this.stageIndex = 0;
+    this.timer = null;
+    this.channelT = 0;
+    if (this.rivals) this.rivals.clear();
+    this.completed += 1;
+    if (this.state) {
+      this.state.money = (this.state.money || 0) + def.payout;
+      this.state.jobsDone = (this.state.jobsDone || 0) + 1;
+      this.state.score = (this.state.score || 0) + def.payout;
     }
+    if (this.respect) this.respect.add(def.respect);
+    if (this.audio) this.audio.missionDone();
+    if (def.id === 7) {
+      if (this.respect) this.respect.points = Math.max(this.respect.points, 1500);
+      if (this.dialog) {
+        this.dialog.show('Rico', 'NEON LEGEND! Kamu resmi jadi legenda Neon Bay. Kota ini milik kita sekarang.', 8);
+      }
+    } else if (this.dialog) {
+      this.dialog.show('Mira', `Job ${def.name} selesai! +$${def.payout}, +${def.respect} respect.`, 6);
+    }
+    return { type: 'completed', def };
+  }
+
+  _advance() {
+    this.stageIndex += 1;
+    this.channelT = 0;
+    if (this.stageIndex >= this.active.stages.length) return this._complete();
+    const st = this.currentStage();
+    if (this.dialog && st) {
+      this.dialog.show(this.active.giver, st.label, 4);
+    }
+    if (this.audio) this.audio.pickup();
+    return { type: 'stage', stageIndex: this.stageIndex };
+  }
+
+  update(dt, player, spawns, ctx = {}) {
+    if (!this.active || !player) return null;
     const st = this.currentStage();
     if (!st) return null;
-    const target = spawns?.[st.target];
-    const d = target ? dist2d(player.x, player.z, target.x, target.z) : Infinity;
-    const radius = CONFIG.missionBeaconRadius + 1;
 
-    if (st.type === 'goto' || st.type === 'escape') {
-      if (d < radius) {
-        if (st.type === 'escape') {
-          const stars = ctx?.wantedStars ?? 0;
-          if (st.target === 'hideout' && stars > 0) {
-            // Di hideout tapi heat belum 0: tunggu (heat turun via Heat.update).
-            return { event: 'waiting-heat' };
-          }
-        }
-        this._advance();
-        this.deps?.audio?.pickup();
-        return { event: 'stage' };
-      }
-    } else if (st.type === 'kill') {
-      const done = this.deps?.rivals?.defeatedCount || 0;
-      if (done >= (st.count || 6)) {
-        this._advance();
-        return { event: 'stage' };
-      }
-    } else if (st.type === 'channel') {
-      if (d < radius) {
-        this.channelProgress += dt;
-        if (this.channelProgress >= (st.channel || 10)) {
-          this._advance();
-          if (def.scriptedStars) this.deps?.heat?.setStars?.(def.scriptedStars);
-          this.deps?.dialog?.show('NBPD', 'Alarm arcade berbunyi! Semua unit ke arcade, sekarang!', 4);
-          return { event: 'stage' };
-        }
-      } else {
-        this.channelProgress = Math.max(0, this.channelProgress - dt * 2);
-      }
-    } else if (st.type === 'race') {
-      const rivals = this.deps?.rivals;
-      if (rivals?.raceFinished) {
-        if (rivals.racePosition === 4) {
-          this._fail('finis terakhir (ke-4)');
-          return { event: 'failed' };
-        }
-        this._complete();
-        return { event: 'completed' };
+    // Timer habis -> gagal.
+    if (this.timer !== null && this.timer !== undefined) {
+      this.timer -= dt;
+      if (this.timer <= 0) {
+        this.timer = 0;
+        return this._fail('timeout');
       }
     }
+
+    const wantedStars = ctx.wantedStars !== undefined
+      ? ctx.wantedStars
+      : (this.heat ? this.heat.stars : 0);
+    const target = this.stageTarget(spawns);
+    const near = (r) => target && dist2d(player.x, player.z, target.x, target.z) <= r;
+
+    if (st.type === 'goto') {
+      if (near(CONFIG.missionBeaconRadius + 1)) return this._advance();
+      return null;
+    }
+
+    if (st.type === 'escape') {
+      if (near(CONFIG.missionBeaconRadius + 2)) {
+        // Wanted harus 0 bila targetnya hideout; extraction cukup dicapai.
+        if (st.target === 'hideout' && wantedStars > 0) {
+          return { type: 'waiting-heat' };
+        }
+        return this._advance();
+      }
+      return null;
+    }
+
+    if (st.type === 'kill') {
+      const done = this.rivals ? this.rivals.defeatedCount : 0;
+      if (done >= (st.count || 0)) return this._advance();
+      return null;
+    }
+
+    if (st.type === 'channel') {
+      if (near(CONFIG.pickupRadius + 1.5)) {
+        this.channelT += dt;
+        if (this.channelT >= (st.seconds || 10)) return this._advance();
+      } else {
+        this.channelT = 0;
+      }
+      return null;
+    }
+
+    if (st.type === 'race') {
+      // Progres pemain melewati gate.
+      const gates = this.raceGates();
+      const gate = gates[this.playerGate % gates.length];
+      if (gate && dist2d(player.x, player.z, gate.x, gate.z) < 9) {
+        this.playerGate += 1;
+        if (this.playerGate >= gates.length) {
+          this.playerGate = 0;
+          this.playerLap += 1;
+          if (this.playerLap >= 2) this.playerFinished = true;
+        }
+      }
+      if (this.playerFinished) return this._complete();
+      // Rival sudah finis semua sementara pemain belum -> finis ke-4.
+      if (this.rivals && this.rivals.raceFinished && !this.playerFinished) {
+        const pos = this.rivals.racePosition || 4;
+        if (pos >= 4) return this._fail('race-last');
+      }
+      return null;
+    }
+
     return null;
   }
 }
