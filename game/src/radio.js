@@ -128,3 +128,5 @@ export class Radio {
 }
 
 export default Radio;
+
+// R8 (rebuild): Radio 3 stasiun WebAudio (NEON 99.1 / OMBO 98.4 / VICE FM); R ganti stasiun, setPlaying(true) dipakai basis preset shot; sequencer tidak pernah throw bila AudioContext suspended.

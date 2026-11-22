@@ -82,3 +82,5 @@ export class Heat {
 }
 
 export default Heat;
+
+// R8 (rebuild): Heat 0-100 = wanted 0-5 bintang (20/star); decay 2.2/dtk, 7/dtk di hideout; policeCount/hasRoadblock/hasHeli dibaca main.js tiap frame.

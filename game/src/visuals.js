@@ -1,125 +1,121 @@
-// visuals.js — Efek partikel & kilat — GTA 6 R7
-// Spec §5 + §17.4/§17.7c. muzzle flash, jejak asap/percik tabrakan,
-// lampu rem, asap knalpot + partikel api mobil rival yang dihentikan
-// (emissive oranye + asap). Pool partikel MAKSIMAL 40 sprite —
-// spawn baru saat pool penuh menggantikan partikel tertua.
+// visuals.js — Efek partikel & kilat — GTA 6 R8 legibility rebuild
+// Fresh composition from the R7 design spec (§5 visuals, §17.4 particles).
+// Pooled sprites, max 40 (R7 §17.7). No new geometry per particle.
 
-export const MAX_PARTICLES = 40;
+const MAX_PARTICLES = 40;
+
+const _geoCache = new Map();
+function sphGeo(r) {
+  if (!_geoCache.has(r)) _geoCache.set(r, new THREE.SphereGeometry(r, 6, 5));
+  return _geoCache.get(r);
+}
 
 export class Visuals {
-  constructor() {
-    this.particles = []; // {x,y,z,vx,vy,vz,life,maxLife,color,size,kind}
-    this.muzzleFlashes = []; // {x,z,heading,life} — dibaca render.js
-    this.brakeLights = false;
+  constructor(scene) {
+    this.scene = scene;
+    this.particles = [];
+    this._flash = null;
+    this._flashUntil = 0;
+    this._time = 0;
+    this._fires = new Map();
   }
 
-  _push(p) {
-    if (this.particles.length >= MAX_PARTICLES) this.particles.shift();
-    this.particles.push(p);
+  _spawn(color, x, y, z, size, life, vy) {
+    let p = this.particles.find((q) => !q.visible);
+    if (!p && this.particles.length >= MAX_PARTICLES) p = this.particles[0];
+    if (!p) {
+      p = new THREE.Mesh(
+        sphGeo(0.3),
+        new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, depthWrite: false })
+      );
+      this.scene.add(p);
+      this.particles.push(p);
+    }
+    p.material = p.material.clone ? p.material : p.material;
+    p.material.color.setHex(color);
+    p.material.opacity = 0.9;
+    p.position.set(x, y, z);
+    p.scale.setScalar(size);
+    p.visible = true;
+    p.userData.life = life;
+    p.userData.maxLife = life;
+    p.userData.vy = vy || 0;
     return p;
   }
 
-  spawn(p) {
-    return this._push({
-      x: p.x || 0, y: p.y == null ? 0.5 : p.y, z: p.z || 0,
-      vx: p.vx || 0, vy: p.vy || 0, vz: p.vz || 0,
-      life: p.life || 0.6, maxLife: p.life || 0.6,
-      color: p.color || '#ffffff', size: p.size || 0.5,
-      kind: p.kind || 'spark',
-    });
-  }
-
-  // Kilat moncong senjata di posisi + heading penembak.
-  flashMuzzle(x, z, heading = 0) {
-    this.muzzleFlashes.push({ x, z, heading, life: 0.08 });
-    for (let i = 0; i < 3; i++) {
-      this.spawn({
-        x: x + Math.sin(heading) * 1.2, y: 1.1, z: z + Math.cos(heading) * 1.2,
-        vx: (Math.random() - 0.5) * 4, vy: Math.random() * 2, vz: (Math.random() - 0.5) * 4,
-        life: 0.12, color: '#ffd166', size: 0.6, kind: 'flash',
-      });
+  // Muzzle flash at the shooter's gun, in facing direction.
+  flashMuzzle(x, z, heading) { this.muzzleFlash(x, z, heading); }
+  muzzleFlash(x, z, heading) {
+    if (!this._flash) {
+      this._flash = new THREE.Mesh(sphGeo(0.55), new THREE.MeshBasicMaterial({ color: 0xffe066 }));
+      this.scene.add(this._flash);
     }
-    return this.muzzleFlashes[this.muzzleFlashes.length - 1];
+    this._flash.position.set(x + Math.sin(heading) * 1.3, 1.35, z + Math.cos(heading) * 1.3);
+    this._flash.visible = true;
+    this._flashUntil = this._time + 0.08;
+    this._spawn(0xffd166, x + Math.sin(heading) * 1.3, 1.35, z + Math.cos(heading) * 1.3, 0.7, 0.12, 0);
   }
 
-  // Percik kuning saat tabrakan (damageCar/damagePlayer).
-  sparks(x, z, n = 6) {
-    for (let i = 0; i < n; i++) {
-      const a = Math.random() * Math.PI * 2;
-      const s = 2 + Math.random() * 5;
-      this.spawn({
-        x, y: 0.8, z,
-        vx: Math.sin(a) * s, vy: 1 + Math.random() * 3, vz: Math.cos(a) * s,
-        life: 0.4 + Math.random() * 0.3, color: '#facc15', size: 0.4, kind: 'spark',
-      });
-    }
-    return this;
-  }
-
-  // Asap abu-abu (tabrakan / knalpot).
-  smoke(x, z, n = 3, color = '#9ca3af') {
-    for (let i = 0; i < n; i++) {
-      this.spawn({
-        x: x + (Math.random() - 0.5), y: 0.6, z: z + (Math.random() - 0.5),
-        vx: (Math.random() - 0.5) * 0.5, vy: 0.8 + Math.random() * 0.8, vz: (Math.random() - 0.5) * 0.5,
-        life: 0.9 + Math.random() * 0.6, color, size: 0.8, kind: 'smoke',
-      });
-    }
-    return this;
-  }
-
-  // Asap knalpot saat akselerasi (ringan: 1 sprite per panggilan).
-  exhaust(x, z, heading) {
+  // Light grey exhaust puff while accelerating.
+  exhaustSmoke(x, z, heading) {
     const bx = x - Math.sin(heading) * 2.2;
     const bz = z - Math.cos(heading) * 2.2;
-    return this.spawn({
-      x: bx, y: 0.4, z: bz,
-      vx: -Math.sin(heading) * 1.5, vy: 0.5, vz: -Math.cos(heading) * 1.5,
-      life: 0.7, color: '#6b7280', size: 0.5, kind: 'smoke',
-    });
+    this._spawn(0x9aa0aa, bx, 0.5, bz, 0.9, 0.7, 0.8);
   }
+  smoke(x, z, heading) { this.exhaustSmoke(x, z, heading); }
+  exhaust(x, z, heading) { this.exhaustSmoke(x, z, heading); }
 
-  // Api mobil rival yang dihentikan (misi 9): emissive oranye + asap.
+  // Yellow collision sparks on damage.
+  collisionSparks(x, z) { this.sparks(x, z); }
+  sparks(x, z) {
+    for (let i = 0; i < 5; i++) {
+      this._spawn(0xffd166, x + (Math.random() - 0.5) * 1.2, 0.8 + Math.random() * 0.6, z + (Math.random() - 0.5) * 1.2, 0.6, 0.35, 1.5);
+    }
+  }
   rivalFire(x, z) {
     for (let i = 0; i < 4; i++) {
-      this.spawn({
-        x: x + (Math.random() - 0.5) * 1.5, y: 0.8 + Math.random() * 0.6, z: z + (Math.random() - 0.5) * 1.5,
-        vx: (Math.random() - 0.5), vy: 1.5 + Math.random(), vz: (Math.random() - 0.5),
-        life: 0.5 + Math.random() * 0.4, color: '#fb923c', size: 0.9, kind: 'fire',
-      });
+      this._spawn(0xfb923c, x + (Math.random() - 0.5) * 1.5, 0.8 + Math.random() * 0.6, z + (Math.random() - 0.5) * 1.5, 0.9, 0.5 + Math.random() * 0.4, 1.5 + Math.random());
     }
-    this.spawn({ x, y: 1.6, z, vx: 0, vy: 1.2, vz: 0, life: 1.2, color: '#4b5563', size: 1.1, kind: 'smoke' });
+    this._spawn(0x4b5563, x, 1.6, z, 1.1, 1.2, 1.2);
     return this;
   }
 
-  setBrakeLights(on) {
-    this.brakeLights = !!on;
-    return this.brakeLights;
+  // Fire + smoke on a stopped rival car (mission 9).
+  startFire(key, x, z) {
+    if (this._fires.has(key)) return;
+    const fire = new THREE.Mesh(sphGeo(0.9), new THREE.MeshBasicMaterial({ color: 0xff7a1a, transparent: true, opacity: 0.85, depthWrite: false }));
+    fire.position.set(x, 1.0, z);
+    this.scene.add(fire);
+    this._fires.set(key, fire);
+  }
+  stopFire(key) {
+    const f = this._fires.get(key);
+    if (f) { f.visible = false; this.scene.remove(f); this._fires.delete(key); }
+  }
+
+  // Brake lights are handled on the car mesh in render.js; this is a
+  // lightweight fallback glow for callers that only have a position.
+  brakeLight(x, z, heading) {
+    this._spawn(0xff2222, x - Math.sin(heading) * 2.1, 0.7, z - Math.cos(heading) * 2.1, 0.8, 0.15, 0);
   }
 
   update(dt) {
-    for (let i = this.particles.length - 1; i >= 0; i--) {
-      const p = this.particles[i];
-      p.life -= dt;
-      if (p.life <= 0) { this.particles.splice(i, 1); continue; }
-      p.x += p.vx * dt;
-      p.y += p.vy * dt;
-      p.z += p.vz * dt;
-      p.vy -= p.kind === 'smoke' ? -0.2 * dt : 4 * dt;
-      if (p.y < 0.05) p.y = 0.05;
+    this._time += dt || 0.016;
+    if (this._flash && this._time > this._flashUntil) this._flash.visible = false;
+    for (const p of this.particles) {
+      if (!p.visible) continue;
+      p.userData.life -= dt || 0.016;
+      if (p.userData.life <= 0) { p.visible = false; continue; }
+      p.position.y += (p.userData.vy || 0) * (dt || 0.016);
+      p.material.opacity = 0.9 * (p.userData.life / p.userData.maxLife);
+      p.scale.multiplyScalar(1 + (dt || 0.016) * 0.8);
     }
-    for (let i = this.muzzleFlashes.length - 1; i >= 0; i--) {
-      this.muzzleFlashes[i].life -= dt;
-      if (this.muzzleFlashes[i].life <= 0) this.muzzleFlashes.splice(i, 1);
+    for (const f of this._fires.values()) {
+      f.scale.setScalar(1 + 0.15 * Math.sin(this._time * 9));
     }
-    return this.particles;
-  }
-
-  clear() {
-    this.particles = [];
-    this.muzzleFlashes = [];
-    return this;
   }
 }
 
+export const VisualEffects = Visuals;
+export function createVisuals(scene) { return new Visuals(scene); }
 export default Visuals;

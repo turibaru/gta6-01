@@ -1,185 +1,131 @@
 <!DOCTYPE html>
 <html lang="id">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>NEON BAY: SUNSET RUN — 3D</title>
 <style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  html, body { width: 100%; height: 100%; overflow: hidden; background: #171226;
-    font-family: 'Segoe UI', Arial, sans-serif; color: #e2e8f0; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #14101f; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color: #e2e8f0; }
   #game-canvas { position: fixed; inset: 0; }
-  #game-canvas canvas { display: block; }
-
-  .hud { position: fixed; z-index: 10; pointer-events: none;
-    text-shadow: 0 1px 3px rgba(0,0,0,.8); }
-  .panel { background: rgba(23, 18, 38, 0.72); border: 1px solid rgba(255,45,120,.45);
-    border-radius: 10px; padding: 10px 14px; backdrop-filter: blur(2px); }
-
-  #hud-top-left { top: 14px; left: 14px; }
-  #hud-top-left .row { font-size: 20px; font-weight: 700; margin-bottom: 2px; }
-  #hud-money { color: #a3e635; }
-  #hud-score { color: #e2e8f0; font-size: 15px !important; }
-  #hud-jobs { color: #22d3ee; font-size: 15px !important; }
-  #hud-wanted { color: #ffd166; letter-spacing: 2px; font-size: 22px !important; }
-  #hud-wanted .star-off { color: #4b4360; }
-
-  #hud-top-right { top: 14px; right: 14px; text-align: right; }
-  #hud-minimap { width: 180px; height: 180px; border: 2px solid #ff2d78;
-    border-radius: 8px; background: #171226; display: block; margin-left: auto; }
-  #hud-top-right .row { font-size: 15px; font-weight: 600; margin-top: 4px; }
-  #hud-radio { color: #ff2d78; }
-  #hud-weapon { color: #ffd166; }
-  #hud-condition { color: #7ee8fa; }
-  #hud-respect { color: #a3e635; }
-
-  #hud-mission-box { left: 14px; bottom: 14px; max-width: 320px; }
-  #hud-mission { color: #ff2d78; font-size: 18px; font-weight: 800; letter-spacing: 1px; }
-  #hud-mission-sub { font-size: 14px; color: #e2e8f0; margin-top: 2px; }
-
-  #hud-dialog { left: 50%; bottom: 110px; transform: translateX(-50%);
-    min-width: 320px; max-width: 560px; text-align: center; display: none; }
-  #hud-dialog-name { color: #22d3ee; font-weight: 800; font-size: 16px; margin-bottom: 2px; }
-  #hud-dialog-text { font-size: 15px; }
-
-  #hud-speed-box { right: 14px; bottom: 14px; text-align: right; }
-  #hud-speed { font-size: 30px; font-weight: 800; color: #fff; }
-  #hud-speed small { font-size: 14px; color: #94a3b8; }
-
-  #hud-toast { left: 50%; top: 70px; transform: translateX(-50%);
-    font-size: 17px; font-weight: 700; color: #ffd166; display: none;
-    background: rgba(23,18,38,.8); border: 1px solid rgba(255,209,102,.5);
-    padding: 8px 18px; border-radius: 8px; }
-
-  .screen { position: fixed; inset: 0; z-index: 20; display: flex;
-    flex-direction: column; align-items: center; justify-content: center;
-    background: linear-gradient(180deg, rgba(61,30,86,.88), rgba(23,18,38,.94));
-    text-align: center; padding: 24px; }
-  .screen[hidden] { display: none; }
-  .screen h1 { font-size: 64px; letter-spacing: 6px; color: #ff2d78;
-    text-shadow: 0 0 24px rgba(255,45,120,.8), 0 2px 0 #7c1030; }
-  .screen h2 { font-size: 30px; letter-spacing: 10px; color: #22d3ee;
-    text-shadow: 0 0 18px rgba(34,211,238,.8); margin-bottom: 14px; }
-  .screen p { max-width: 620px; font-size: 16px; line-height: 1.6; color: #e2e8f0; }
-  .screen .controls { margin: 18px 0; font-size: 14px; line-height: 1.9; color: #c4b5fd;
-    background: rgba(0,0,0,.3); border: 1px solid rgba(139,92,246,.4);
-    border-radius: 10px; padding: 12px 22px; text-align: left; }
-  .screen .controls b { color: #ffd166; }
-  button { pointer-events: auto; cursor: pointer; font-size: 18px; font-weight: 800;
-    color: #fff; background: linear-gradient(90deg, #ff2d78, #8b5cf6);
-    border: none; border-radius: 10px; padding: 12px 30px; letter-spacing: 1px;
-    box-shadow: 0 0 18px rgba(255,45,120,.6); }
-  button:hover { filter: brightness(1.15); }
-  #wasted-screen h1 { color: #ef4444; text-shadow: 0 0 24px rgba(239,68,68,.8); }
-
-  #garage-panel { position: fixed; z-index: 30; left: 50%; top: 50%;
-    transform: translate(-50%, -50%); width: 420px; max-width: 92vw;
-    background: rgba(23,18,38,.95); border: 2px solid #22d3ee; border-radius: 14px;
-    padding: 20px; text-align: center; box-shadow: 0 0 30px rgba(34,211,238,.4); }
-  #garage-panel[hidden] { display: none; }
-  #garage-panel h3 { color: #22d3ee; letter-spacing: 3px; font-size: 22px; margin-bottom: 4px; }
-  #garage-panel p { font-size: 14px; color: #94a3b8; margin-bottom: 12px; }
-  .car-choice { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
-  .car-choice button { font-size: 15px; padding: 12px 8px; background: rgba(139,92,246,.35);
-    border: 1px solid rgba(139,92,246,.7); box-shadow: none; }
-  .car-choice button.selected { background: linear-gradient(90deg, #ff2d78, #8b5cf6);
-    border-color: #ff2d78; }
-  .car-choice button small { display: block; font-size: 12px; font-weight: 400; color: #c4b5fd; margin-top: 3px; }
-  .garage-actions { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
-  .garage-actions button { font-size: 14px; padding: 9px 14px; }
-  #garage-close { background: #334155; box-shadow: none; }
+  #three-canvas { display: block; width: 100%; height: 100%; }
+  .hud { position: fixed; z-index: 10; pointer-events: none; }
+  .pill {
+    display: inline-block; background: rgba(12, 8, 24, 0.72); border: 1px solid rgba(255, 45, 120, 0.45);
+    border-radius: 10px; padding: 6px 12px; font-size: 18px; font-weight: 700; line-height: 1.2;
+    text-shadow: 0 2px 4px rgba(0,0,0,0.8); margin: 3px;
+  }
+  /* R8 HUD sizes: money 26px, wanted 27px, pill 18px, banner 22px, speed 36px */
+  #hud-top-left { top: 12px; left: 12px; }
+  #hud-money { font-size: 26px; color: #ffd166; }
+  #hud-score { font-size: 18px; }
+  #hud-jobs { font-size: 18px; color: #7ee8fa; }
+  #hud-wanted { font-size: 27px; letter-spacing: 2px; color: #ffd166; }
+  #hud-wanted .star-off { color: rgba(226, 232, 240, 0.35); }
+  #hud-top-right { top: 12px; right: 12px; text-align: right; }
+  #hud-minimap { width: 240px; height: 240px; border: 2px solid rgba(255, 45, 120, 0.6); border-radius: 10px; background: #241f33; display: block; margin-left: auto; }
+  #hud-radio, #hud-weapon, #hud-condition, #hud-respect { font-size: 18px; }
+  #hud-mission-box { left: 12px; bottom: 12px; max-width: 320px; background: rgba(12, 8, 24, 0.72); border: 1px solid rgba(34, 211, 238, 0.45); border-radius: 10px; padding: 10px 14px; }
+  #hud-banner { font-size: 22px; font-weight: 800; color: #ff2d78; text-shadow: 0 2px 6px rgba(0,0,0,0.9); }
+  #hud-mission { font-size: 20px; font-weight: 800; color: #ffd166; }
+  #hud-mission-sub { font-size: 18px; color: #e2e8f0; margin-top: 2px; }
+  #hud-dialog { left: 50%; bottom: 110px; transform: translateX(-50%); max-width: 560px; width: 90%; background: rgba(12, 8, 24, 0.85); border: 1px solid rgba(255, 210, 122, 0.5); border-radius: 12px; padding: 12px 18px; display: none; }
+  #hud-dialog-name { font-size: 20px; font-weight: 800; color: #ff2d78; }
+  #hud-dialog-text { font-size: 18px; margin-top: 2px; }
+  #hud-speed-box { right: 16px; bottom: 14px; text-align: right; }
+  #hud-speed { font-size: 36px; font-weight: 800; color: #fff; text-shadow: 0 2px 8px rgba(0,0,0,0.9); }
+  #hud-speed-unit { font-size: 18px; color: #94a3b8; }
+  #hud-toast { left: 50%; top: 14px; transform: translateX(-50%); background: rgba(12, 8, 24, 0.8); border-radius: 10px; padding: 8px 16px; font-size: 18px; font-weight: 700; display: none; }
+  .screen { position: fixed; inset: 0; z-index: 20; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; background: linear-gradient(180deg, rgba(35,35,94,0.88), rgba(255,122,60,0.55) 70%, rgba(255,209,102,0.45)); }
+  .screen h1 { font-size: 64px; font-weight: 900; letter-spacing: 4px; color: #fff; text-shadow: 0 0 24px #ff2d78, 0 4px 0 rgba(0,0,0,0.4); }
+  .screen h2 { font-size: 28px; letter-spacing: 10px; color: #ffd166; margin-top: 4px; }
+  .screen p { font-size: 18px; max-width: 620px; margin: 18px 12px 8px; line-height: 1.5; }
+  .screen .controls { font-size: 16px; line-height: 1.8; background: rgba(12,8,24,0.6); border-radius: 12px; padding: 12px 22px; margin-top: 10px; }
+  .screen button { pointer-events: auto; margin-top: 20px; font-size: 22px; font-weight: 800; padding: 14px 34px; border: none; border-radius: 12px; background: #ff2d78; color: #fff; cursor: pointer; box-shadow: 0 0 24px rgba(255,45,120,0.7); }
+  .screen button:hover { background: #ff4d8d; }
+  /* Garage panel: 350px wide (~27% of screen) so the world stays visible beside it. */
+  #garage-panel { position: fixed; z-index: 30; top: 50%; left: 24px; transform: translateY(-50%); width: 350px; max-width: 90vw; background: rgba(12, 8, 24, 0.92); border: 1px solid rgba(255, 45, 120, 0.55); border-radius: 14px; padding: 18px; display: none; pointer-events: auto; }
+  #garage-panel h3 { font-size: 22px; color: #ffd166; margin-bottom: 10px; }
+  #garage-panel .car-choice { display: block; width: 100%; text-align: left; font-size: 18px; font-weight: 700; padding: 10px 12px; margin: 6px 0; border-radius: 10px; border: 1px solid rgba(226,232,240,0.25); background: rgba(255,255,255,0.06); color: #e2e8f0; cursor: pointer; }
+  #garage-panel .car-choice:hover, #garage-panel .car-choice.selected { border-color: #ff2d78; background: rgba(255,45,120,0.2); }
+  #garage-panel .garage-actions { margin-top: 12px; font-size: 16px; line-height: 1.9; }
+  #garage-close { margin-top: 12px; width: 100%; font-size: 18px; font-weight: 800; padding: 10px; border: none; border-radius: 10px; background: #22d3ee; color: #0b1020; cursor: pointer; }
+  #wasted-screen { display: none; }
+  #pause-screen { display: none; }
 </style>
 </head>
 <body>
-<div id="game-canvas"></div>
+<div id="game-canvas"><canvas id="three-canvas"></canvas></div>
 
-<!-- HUD kiri atas -->
-<div id="hud-top-left" class="hud panel">
-  <div class="row" id="hud-money">$150</div>
-  <div class="row" id="hud-score">SKOR 0</div>
-  <div class="row" id="hud-jobs">JOB 0/10 SELESAI</div>
-  <div class="row" id="hud-wanted"><span class="star-off">★★★★★</span></div>
+<div id="hud-top-left" class="hud">
+  <div><span id="hud-money" class="pill">$150</span></div>
+  <div><span id="hud-score" class="pill">SKOR 0</span></div>
+  <div><span id="hud-jobs" class="pill">JOB 0/10 SELESAI</span></div>
+  <div><span id="hud-wanted" class="pill">☆☆☆☆☆</span></div>
 </div>
 
-<!-- HUD kanan atas -->
 <div id="hud-top-right" class="hud">
-  <canvas id="hud-minimap" width="180" height="180"></canvas>
-  <div class="row panel" id="hud-radio">NEON 99.1</div>
-  <div class="row panel" id="hud-weapon">Pistol — ∞</div>
-  <div class="row panel" id="hud-condition">KONDISI 100%</div>
-  <div class="row panel" id="hud-respect">Rookie — 0</div>
+  <canvas id="hud-minimap" width="240" height="240"></canvas>
+  <div><span id="hud-radio" class="pill">♪ NEON 99.1</span></div>
+  <div><span id="hud-weapon" class="pill">PISTOL ∞</span></div>
+  <div><span id="hud-condition" class="pill">KONDISI 100%</span></div>
+  <div><span id="hud-respect" class="pill">ROOKIE</span></div>
 </div>
 
-<!-- HUD misi kiri bawah -->
-<div id="hud-mission-box" class="hud panel">
+<div id="hud-mission-box" class="hud">
+  <div id="hud-banner"></div>
   <div id="hud-mission">NEON BAY</div>
-  <div id="hud-mission-sub">Pergi ke garage dan tekan ENTER untuk mulai job pertama.</div>
+  <div id="hud-mission-sub">Pergi ke garage dan tekan ENTER untuk mulai job berikutnya.</div>
 </div>
 
-<!-- Dialog tengah bawah -->
-<div id="hud-dialog" class="hud panel">
+<div id="hud-dialog" class="hud">
   <div id="hud-dialog-name">Mira</div>
   <div id="hud-dialog-text"></div>
 </div>
 
-<!-- Kecepatan kanan bawah -->
-<div id="hud-speed-box" class="hud panel">
-  <div id="hud-speed">0 <small>km/j</small></div>
+<div id="hud-speed-box" class="hud">
+  <span id="hud-speed">0</span> <span id="hud-speed-unit">km/j</span>
 </div>
 
-<!-- Toast tengah atas -->
 <div id="hud-toast" class="hud"></div>
 
-<!-- Layar judul -->
+<div id="garage-panel">
+  <h3>GARASI — NEON BAY</h3>
+  <button class="car-choice" data-car="sedan">SEDAN — seimbang, kondisi 100</button>
+  <button class="car-choice" data-car="sport">SPORT — cepat, kondisi 100</button>
+  <button class="car-choice" data-car="truck">TRUCK — kuat, kondisi 100</button>
+  <button class="car-choice" data-car="bike">BIKE — lincah, kondisi 60</button>
+  <div class="garage-actions">
+    <div>Mesin Lv <span id="garage-engine-level">0</span> — upgrade $300 (E)</div>
+    <div>Perbaiki $150 (R) &nbsp; Cat $100 (C)</div>
+  </div>
+  <button id="garage-close">TUTUP (G)</button>
+</div>
+
 <div id="title-screen" class="screen">
   <h1>NEON BAY</h1>
   <h2>SUNSET RUN — 3D</h2>
-  <p>Open-world crime 3D di kota pantai Neon Bay saat golden hour.
-     Bantu kru Mira &amp; Rico menyelesaikan <b>10 job</b> berurutan — antar paket,
-     kabur dari NBPD, balapan jalanan, heist arcade — lalu free-roam.
-     Naik motor, tembak rifle, dan jadi Neon Legend.</p>
+  <p>Open-world 3D di kota pantai saat golden hour. Bantu kru Mira &amp; Rico menyelesaikan 10 job, kabur dari polisi NBPD, dan jadi Neon Legend.</p>
   <div class="controls">
-    <b>WASD / Panah</b> — gerak &amp; nyetir &nbsp;·&nbsp; <b>SHIFT</b> — lari / ngebut<br>
-    <b>E</b> — masuk / keluar mobil &amp; motor &nbsp;·&nbsp; <b>SPASI</b> — rem tangan<br>
-    <b>F / Klik</b> — tembak &nbsp;·&nbsp; <b>1–5</b> — ganti senjata (5 = rifle)<br>
-    <b>R</b> — ganti radio &nbsp;·&nbsp; <b>G</b> — garasi (upgrade, cat, pilih kendaraan)<br>
-    <b>P / ESC</b> — jeda &nbsp;·&nbsp; <b>M</b> — mute &nbsp;·&nbsp; <b>ENTER</b> — mulai job
+    WASD / panah — gerak &nbsp;·&nbsp; SHIFT — lari / ngebut<br>
+    E — masuk / keluar mobil &nbsp;·&nbsp; SPASI — rem tangan<br>
+    F / klik — tembak &nbsp;·&nbsp; 1–5 — senjata (5 = rifle)<br>
+    R — radio &nbsp;·&nbsp; G — garasi &nbsp;·&nbsp; P / ESC — jeda &nbsp;·&nbsp; M — mute<br>
+    ENTER — mulai job di garage
   </div>
   <button id="title-start">KLIK UNTUK MULAI</button>
 </div>
 
-<!-- Layar jeda -->
-<div id="pause-screen" class="screen" hidden>
+<div id="pause-screen" class="screen">
   <h1>JEDA</h1>
-  <h2>NEON BAY</h2>
-  <p>Tekan P / ESC untuk lanjut main.</p>
+  <p>Tekan P / ESC untuk lanjut.</p>
+  <button id="pause-resume">LANJUT</button>
 </div>
 
-<!-- Layar wasted -->
-<div id="wasted-screen" class="screen" hidden>
+<div id="wasted-screen" class="screen">
   <h1>WASTED</h1>
-  <h2>NEON BAY</h2>
-  <p id="wasted-text">Kamu tumbang. Denda $200 — respawn di garage.</p>
-  <br>
-  <button id="wasted-continue">LANJUT</button>
-</div>
-
-<!-- Panel garasi: 4 pilihan kendaraan (§17.2) -->
-<div id="garage-panel" hidden>
-  <h3>GARASI</h3>
-  <p id="garage-money">Uang: $150</p>
-  <div class="car-choice">
-    <button data-car="sedan">SEDAN<small>seimbang — standar kru</small></button>
-    <button data-car="sport">SPORT<small>lebih cepat, handling tajam</small></button>
-    <button data-car="truck">TRUCK<small>besar &amp; kuat, lambat</small></button>
-    <button data-car="bike">MOTOR<small>tercepat, rapuh (kondisi 60)</small></button>
-  </div>
-  <div class="garage-actions">
-    <button id="garage-engine">MESIN +$300</button>
-    <button id="garage-repair">PERBAIKI $150</button>
-    <button id="garage-paint">CAT $100</button>
-    <button id="garage-close">TUTUP (G)</button>
-  </div>
+  <p id="wasted-text">Kamu tumbang. Denda $200.</p>
+  <button id="wasted-respawn">RESPAWN DI GARAGE</button>
 </div>
 
 <script src="./vendor/three.min.js"></script>

@@ -54,3 +54,5 @@ export class Respect {
 }
 
 export default Respect;
+
+// R8 (rebuild): Respect Rookie 0 / Hustler 150 / Wheelman 400 / Kingpin 800 / Neon Legend 1500 — rank NEON LEGEND diraih saat misi 10 selesai (bukan misi 7).

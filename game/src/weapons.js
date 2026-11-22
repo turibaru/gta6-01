@@ -138,3 +138,5 @@ export class Weapons {
 }
 
 export default Weapons;
+
+// R8 (rebuild): Weapons pistol/scatter/smg/fists/rifle (rifle key 5, dmg 60, range 140); tiap tembakan +10 heat kecuali mengenai mobil rival misi 9; getOrigin/getTargets di-supply main.js.

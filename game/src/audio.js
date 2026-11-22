@@ -183,3 +183,5 @@ export class AudioSys {
 }
 
 export default AudioSys;
+
+// R8 (rebuild): AudioSys dipakai main.js untuk semua efek suara + engine hum; AudioContext dibuat lazy saat gesture pertama (§16a) — jangan panggil ensure() di boot.

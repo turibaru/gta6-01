@@ -76,3 +76,5 @@ export class Dialog {
 }
 
 export default Dialog;
+
+// R8 (rebuild): Dialog merender ke #hud-dialog (nama + teks, auto-hide); showBriefing dipakai missions.begin() untuk tiap job 1-10.

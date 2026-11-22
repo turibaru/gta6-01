@@ -213,3 +213,5 @@ export class Rivals {
 }
 
 export default Rivals;
+
+// R8 (rebuild): Rivals untuk misi 4 (shootout 6 di pier), misi 5 (balapan 2 lap), misi 9 (4 mobil kabur, condition 60, kecepatan 12-14, rute loop Strip — §17.7b: tembakan ke mobil rival tidak menambah heat).

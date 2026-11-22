@@ -113,3 +113,5 @@ export class Input {
 }
 
 export default Input;
+
+// R8 (rebuild): Input edge-trigger via wasPressed() (ENTER/E/F/G/R sekali per tekan); playtest shot.mjs mengirim KeyboardEvent sintetis ke window — jangan ganti target listener.
