@@ -1,160 +1,125 @@
-// NEON BAY: SUNSET RUN — visuals.js
-// Efek ringan: muzzle flash, asap/percik tabrakan, lampu rem, asap knalpot.
-// Mesh dipakai ulang (pool), tanpa alokasi tiap frame.
-// Ditulis fresh di sesi terekam ronde 6, dari design spec §5.
+// visuals.js — Efek partikel & kilat — GTA 6 R7
+// Spec §5 + §17.4/§17.7c. muzzle flash, jejak asap/percik tabrakan,
+// lampu rem, asap knalpot + partikel api mobil rival yang dihentikan
+// (emissive oranye + asap). Pool partikel MAKSIMAL 40 sprite —
+// spawn baru saat pool penuh menggantikan partikel tertua.
 
-import { Render } from './render.js';
+export const MAX_PARTICLES = 40;
 
 export class Visuals {
-  constructor(scene) {
-    this.scene = scene || null;
-    this._smoke = [];
-    this._sparks = [];
-    this._brake = null;
-    this._brakeTtl = 0;
+  constructor() {
+    this.particles = []; // {x,y,z,vx,vy,vz,life,maxLife,color,size,kind}
+    this.muzzleFlashes = []; // {x,z,heading,life} — dibaca render.js
+    this.brakeLights = false;
   }
 
-  _three() {
-    return (typeof window !== 'undefined' ? window.THREE : null);
+  _push(p) {
+    if (this.particles.length >= MAX_PARTICLES) this.particles.shift();
+    this.particles.push(p);
+    return p;
   }
 
-  flashMuzzle(x, z, heading) {
-    if (Render && Render.flashMuzzle) Render.flashMuzzle(x, z, heading);
+  spawn(p) {
+    return this._push({
+      x: p.x || 0, y: p.y == null ? 0.5 : p.y, z: p.z || 0,
+      vx: p.vx || 0, vy: p.vy || 0, vz: p.vz || 0,
+      life: p.life || 0.6, maxLife: p.life || 0.6,
+      color: p.color || '#ffffff', size: p.size || 0.5,
+      kind: p.kind || 'spark',
+    });
   }
 
-  _get(pool, make, cap) {
-    let item = pool.find((p) => !p.mesh.visible);
-    if (!item && pool.length < cap) {
-      item = make();
-      if (item) pool.push(item);
+  // Kilat moncong senjata di posisi + heading penembak.
+  flashMuzzle(x, z, heading = 0) {
+    this.muzzleFlashes.push({ x, z, heading, life: 0.08 });
+    for (let i = 0; i < 3; i++) {
+      this.spawn({
+        x: x + Math.sin(heading) * 1.2, y: 1.1, z: z + Math.cos(heading) * 1.2,
+        vx: (Math.random() - 0.5) * 4, vy: Math.random() * 2, vz: (Math.random() - 0.5) * 4,
+        life: 0.12, color: '#ffd166', size: 0.6, kind: 'flash',
+      });
     }
-    return item || null;
+    return this.muzzleFlashes[this.muzzleFlashes.length - 1];
   }
 
-  spawnSmoke(x, z, n = 6) {
-    const THREE = this._three();
-    if (!THREE || !this.scene) return;
+  // Percik kuning saat tabrakan (damageCar/damagePlayer).
+  sparks(x, z, n = 6) {
     for (let i = 0; i < n; i++) {
-      const item = this._get(this._smoke, () => {
-        const mesh = new THREE.Mesh(
-          new THREE.SphereGeometry(0.7, 8, 6),
-          new THREE.MeshBasicMaterial({ color: 0x9ca3af, transparent: true, opacity: 0.55 }));
-        mesh.visible = false;
-        this.scene.add(mesh);
-        return { mesh, ttl: 0, max: 1, vx: 0, vy: 0, vz: 0 };
-      }, 24);
-      if (!item) break;
-      item.mesh.position.set(x + (Math.random() - 0.5) * 2, 0.8 + Math.random() * 0.5, z + (Math.random() - 0.5) * 2);
-      item.mesh.visible = true;
-      item.ttl = item.max = 0.7 + Math.random() * 0.5;
-      item.vx = (Math.random() - 0.5) * 1.2;
-      item.vy = 1.2 + Math.random();
-      item.vz = (Math.random() - 0.5) * 1.2;
-    }
-  }
-
-  spawnSparks(x, z, n = 8) {
-    const THREE = this._three();
-    if (!THREE || !this.scene) return;
-    for (let i = 0; i < n; i++) {
-      const item = this._get(this._sparks, () => {
-        const mesh = new THREE.Mesh(
-          new THREE.BoxGeometry(0.22, 0.22, 0.22),
-          new THREE.MeshBasicMaterial({ color: 0xfbbf24 }));
-        mesh.visible = false;
-        this.scene.add(mesh);
-        return { mesh, ttl: 0, max: 1, vx: 0, vy: 0, vz: 0 };
-      }, 32);
-      if (!item) break;
-      item.mesh.position.set(x, 0.7, z);
-      item.mesh.visible = true;
-      item.ttl = item.max = 0.35 + Math.random() * 0.25;
       const a = Math.random() * Math.PI * 2;
-      const sp = 4 + Math.random() * 6;
-      item.vx = Math.sin(a) * sp;
-      item.vy = 2 + Math.random() * 4;
-      item.vz = Math.cos(a) * sp;
+      const s = 2 + Math.random() * 5;
+      this.spawn({
+        x, y: 0.8, z,
+        vx: Math.sin(a) * s, vy: 1 + Math.random() * 3, vz: Math.cos(a) * s,
+        life: 0.4 + Math.random() * 0.3, color: '#facc15', size: 0.4, kind: 'spark',
+      });
     }
+    return this;
   }
 
-  // Percik + asap saat tabrakan.
-  crashBurst(x, z) {
-    this.spawnSmoke(x, z, 5);
-    this.spawnSparks(x, z, 8);
-  }
-
-  // Asap knalpot ringan di belakang mobil.
-  exhaustPuff(x, z, heading) {
-    const THREE = this._three();
-    if (!THREE || !this.scene) return;
-    const bx = x - Math.sin(heading) * 2.4;
-    const bz = z - Math.cos(heading) * 2.4;
-    const item = this._get(this._smoke, () => {
-      const mesh = new THREE.Mesh(
-        new THREE.SphereGeometry(0.45, 8, 6),
-        new THREE.MeshBasicMaterial({ color: 0x6b7280, transparent: true, opacity: 0.4 }));
-      mesh.visible = false;
-      this.scene.add(mesh);
-      return { mesh, ttl: 0, max: 1, vx: 0, vy: 0, vz: 0 };
-    }, 24);
-    if (!item) return;
-    item.mesh.position.set(bx, 0.5, bz);
-    item.mesh.visible = true;
-    item.ttl = item.max = 0.6;
-    item.vx = -Math.sin(heading) * 1.5;
-    item.vy = 0.8;
-    item.vz = -Math.cos(heading) * 1.5;
-  }
-
-  // Kilau lampu rem merah di belakang mobil (pudar cepat).
-  brakeGlow(x, z, heading) {
-    const THREE = this._three();
-    if (!THREE || !this.scene) return;
-    if (!this._brake) {
-      const mesh = new THREE.Mesh(
-        new THREE.PlaneGeometry(2.4, 0.5),
-        new THREE.MeshBasicMaterial({ color: 0xef4444, transparent: true, opacity: 0.9, side: THREE.DoubleSide }));
-      mesh.visible = false;
-      this.scene.add(mesh);
-      this._brake = { mesh, ttl: 0 };
+  // Asap abu-abu (tabrakan / knalpot).
+  smoke(x, z, n = 3, color = '#9ca3af') {
+    for (let i = 0; i < n; i++) {
+      this.spawn({
+        x: x + (Math.random() - 0.5), y: 0.6, z: z + (Math.random() - 0.5),
+        vx: (Math.random() - 0.5) * 0.5, vy: 0.8 + Math.random() * 0.8, vz: (Math.random() - 0.5) * 0.5,
+        life: 0.9 + Math.random() * 0.6, color, size: 0.8, kind: 'smoke',
+      });
     }
-    const bx = x - Math.sin(heading) * 2.3;
-    const bz = z - Math.cos(heading) * 2.3;
-    this._brake.mesh.position.set(bx, 0.9, bz);
-    this._brake.mesh.rotation.set(0, heading, 0);
-    this._brake.mesh.visible = true;
-    this._brakeTtl = 0.18;
+    return this;
+  }
+
+  // Asap knalpot saat akselerasi (ringan: 1 sprite per panggilan).
+  exhaust(x, z, heading) {
+    const bx = x - Math.sin(heading) * 2.2;
+    const bz = z - Math.cos(heading) * 2.2;
+    return this.spawn({
+      x: bx, y: 0.4, z: bz,
+      vx: -Math.sin(heading) * 1.5, vy: 0.5, vz: -Math.cos(heading) * 1.5,
+      life: 0.7, color: '#6b7280', size: 0.5, kind: 'smoke',
+    });
+  }
+
+  // Api mobil rival yang dihentikan (misi 9): emissive oranye + asap.
+  rivalFire(x, z) {
+    for (let i = 0; i < 4; i++) {
+      this.spawn({
+        x: x + (Math.random() - 0.5) * 1.5, y: 0.8 + Math.random() * 0.6, z: z + (Math.random() - 0.5) * 1.5,
+        vx: (Math.random() - 0.5), vy: 1.5 + Math.random(), vz: (Math.random() - 0.5),
+        life: 0.5 + Math.random() * 0.4, color: '#fb923c', size: 0.9, kind: 'fire',
+      });
+    }
+    this.spawn({ x, y: 1.6, z, vx: 0, vy: 1.2, vz: 0, life: 1.2, color: '#4b5563', size: 1.1, kind: 'smoke' });
+    return this;
+  }
+
+  setBrakeLights(on) {
+    this.brakeLights = !!on;
+    return this.brakeLights;
   }
 
   update(dt) {
-    if (dt <= 0) return;
-    for (const s of this._smoke) {
-      if (!s.mesh.visible) continue;
-      s.ttl -= dt;
-      if (s.ttl <= 0) { s.mesh.visible = false; continue; }
-      s.mesh.position.x += s.vx * dt;
-      s.mesh.position.y += s.vy * dt;
-      s.mesh.position.z += s.vz * dt;
-      const k = s.ttl / s.max;
-      s.mesh.material.opacity = 0.55 * k;
-      const sc = 1 + (1 - k) * 1.2;
-      s.mesh.scale.set(sc, sc, sc);
+    for (let i = this.particles.length - 1; i >= 0; i--) {
+      const p = this.particles[i];
+      p.life -= dt;
+      if (p.life <= 0) { this.particles.splice(i, 1); continue; }
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.z += p.vz * dt;
+      p.vy -= p.kind === 'smoke' ? -0.2 * dt : 4 * dt;
+      if (p.y < 0.05) p.y = 0.05;
     }
-    for (const s of this._sparks) {
-      if (!s.mesh.visible) continue;
-      s.ttl -= dt;
-      if (s.ttl <= 0) { s.mesh.visible = false; continue; }
-      s.vy -= 12 * dt;
-      s.mesh.position.x += s.vx * dt;
-      s.mesh.position.y = Math.max(0.1, s.mesh.position.y + s.vy * dt);
-      s.mesh.position.z += s.vz * dt;
-      s.mesh.material.opacity = 1;
-      s.mesh.rotation.x += dt * 9;
-      s.mesh.rotation.y += dt * 7;
+    for (let i = this.muzzleFlashes.length - 1; i >= 0; i--) {
+      this.muzzleFlashes[i].life -= dt;
+      if (this.muzzleFlashes[i].life <= 0) this.muzzleFlashes.splice(i, 1);
     }
-    if (this._brake && this._brake.mesh.visible) {
-      this._brakeTtl -= dt;
-      if (this._brakeTtl <= 0) this._brake.mesh.visible = false;
-    }
+    return this.particles;
+  }
+
+  clear() {
+    this.particles = [];
+    this.muzzleFlashes = [];
+    return this;
   }
 }
+
+export default Visuals;

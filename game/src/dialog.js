@@ -1,56 +1,78 @@
-// NEON BAY: SUNSET RUN — dialog.js
-// Kotak dialog karakter di #hud-dialog + antrean + kartu briefing misi.
-// Ditulis fresh di sesi terekam ronde 6, dari design spec §5.
+// dialog.js — Dialog / briefing HUD — GTA 6 R7
+// Spec §5. Tampil di #hud-dialog (#hud-dialog-name + #hud-dialog-text),
+// auto-hide setelah `seconds`. queue() menumpuk dialog berurutan.
 
 export class Dialog {
   constructor() {
-    this.box = document.getElementById('hud-dialog');
-    this.nameEl = document.getElementById('hud-dialog-name');
-    this.textEl = document.getElementById('hud-dialog-text');
     this.visible = false;
-    this._timer = null;
+    this.name = '';
+    this.text = '';
+    this._timer = 0;
     this._queue = [];
+    this._el = null;
+    this._nameEl = null;
+    this._textEl = null;
+    if (typeof document !== 'undefined') {
+      this._el = document.getElementById('hud-dialog');
+      this._nameEl = document.getElementById('hud-dialog-name');
+      this._textEl = document.getElementById('hud-dialog-text');
+    }
+  }
+
+  _render() {
+    if (this._el) this._el.style.display = this.visible ? 'block' : 'none';
+    if (this._nameEl) this._nameEl.textContent = this.name || '';
+    if (this._textEl) this._textEl.textContent = this.text || '';
   }
 
   show(name, text, seconds = 4) {
-    if (!this.box) return;
-    if (this._timer) {
-      clearTimeout(this._timer);
-      this._timer = null;
-    }
-    if (this.nameEl) this.nameEl.textContent = name || '';
-    if (this.textEl) this.textEl.textContent = text || '';
-    this.box.style.display = 'block';
+    this.name = name || '';
+    this.text = text || '';
     this.visible = true;
-    if (seconds && seconds > 0) {
-      this._timer = setTimeout(() => this.hide(), seconds * 1000);
-    }
+    this._timer = Math.max(0.5, seconds || 4);
+    this._render();
+    return this;
   }
 
   hide() {
-    if (this._timer) {
-      clearTimeout(this._timer);
-      this._timer = null;
-    }
-    if (this.box) this.box.style.display = 'none';
     this.visible = false;
-    const next = this._queue.shift();
-    if (next) this.show(next.name, next.text, next.seconds);
-  }
-
-  // Antrekan: bila ada dialog tampil, tunggu giliran.
-  queue(name, text, seconds = 4) {
-    if (this.visible) {
-      this._queue.push({ name, text, seconds });
-    } else {
-      this.show(name, text, seconds);
+    this._timer = 0;
+    this._render();
+    // Bila ada antrean, tampilkan berikutnya.
+    if (this._queue.length > 0) {
+      const next = this._queue.shift();
+      this.show(next.name, next.text, next.seconds);
     }
+    return this;
   }
 
-  // Kartu briefing misi: nama + brief + payout.
+  // Briefing misi: nama misi + brief + payout.
   showBriefing(def) {
-    if (!def) return;
-    const text = `${def.name} — ${def.brief} (Hadiah $${def.payout}, +${def.respect} respect)`;
-    this.show(def.giver || 'Mira', text, 7);
+    if (!def) return this;
+    const title = def.name || ('JOB ' + (def.id || ''));
+    const brief = def.brief || def.description || '';
+    const payout = def.payout ? ' — Hadiah $' + def.payout : '';
+    const timer = def.timer ? ' — ' + def.timer + ' dtk' : '';
+    return this.show(title, brief + payout + timer, 6);
+  }
+
+  queue(name, text, seconds = 4) {
+    if (!this.visible) return this.show(name, text, seconds);
+    this._queue.push({ name, text, seconds });
+    return this;
+  }
+
+  // Dipanggil tiap frame dari main loop.
+  update(dt) {
+    if (!this.visible) return;
+    this._timer -= dt;
+    if (this._timer <= 0) this.hide();
+  }
+
+  clearQueue() {
+    this._queue.length = 0;
+    return this;
   }
 }
+
+export default Dialog;

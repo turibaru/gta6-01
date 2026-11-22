@@ -1,17 +1,16 @@
-// NEON BAY: SUNSET RUN — serve.ts (server file statis untuk dev/playtest)
+// serve.ts — server file statis untuk game NEON BAY: SUNSET RUN.
 // Node 22 stdlib saja. Root = game/ di sebelah file ini.
-//   PORT=8080 node serve.ts   ->  http://127.0.0.1:8080/
-// Ditulis fresh di sesi terekam ronde 6, dari design spec §12.
-
+// PORT env (default 8080), listen 127.0.0.1.
+import { createReadStream, existsSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
-import { existsSync, readFileSync, statSync } from 'node:fs';
-import { extname, join, resolve } from 'node:path';
+import { dirname, extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const root = resolve(fileURLToPath(new URL('./game', import.meta.url)));
-const port = Number(process.env.PORT || 8080);
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), 'game');
+const PORT = Number(process.env.PORT ?? 8080);
+const HOST = '127.0.0.1';
 
-const MIME = {
+const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
   '.mjs': 'text/javascript; charset=utf-8',
@@ -27,29 +26,31 @@ const MIME = {
 const server = createServer((req, res) => {
   try {
     // Query string diabaikan saat mencari file.
-    const rawPath = decodeURIComponent((req.url || '/').split('?')[0].split('#')[0]);
-    const rel = rawPath === '/' ? 'index.html' : rawPath.replace(/^\/+/, '');
-    const filePath = resolve(join(root, rel));
+    const rawPath = decodeURIComponent((req.url ?? '/').split('?')[0].split('#')[0]);
+    const relPath = rawPath === '/' ? 'index.html' : rawPath.replace(/^\/+/, '');
+    const resolved = resolve(join(ROOT, normalize(relPath)));
     // Path traversal keluar dari game/ ditolak (403).
-    if (filePath !== root && !filePath.startsWith(root + '/')) {
+    if (resolved !== ROOT && !resolved.startsWith(ROOT + sep)) {
       res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-      res.end('403 forbidden\n');
+      res.end('403 Forbidden\n');
       return;
     }
-    if (!existsSync(filePath) || !statSync(filePath).isFile()) {
+    const target = statSync(resolved, { throwIfNoEntry: false })?.isDirectory()
+      ? join(resolved, 'index.html')
+      : resolved;
+    if (!existsSync(target) || !statSync(target).isFile()) {
       res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
-      res.end('404 not found\n');
+      res.end('404 Not Found\n');
       return;
     }
-    const ext = extname(filePath).toLowerCase();
-    res.writeHead(200, { 'content-type': MIME[ext] || 'application/octet-stream' });
-    res.end(readFileSync(filePath));
-  } catch (err) {
+    res.writeHead(200, { 'content-type': MIME[extname(target).toLowerCase()] ?? 'application/octet-stream' });
+    createReadStream(target).pipe(res);
+  } catch {
     res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' });
-    res.end(`500 ${err.message}\n`);
+    res.end('500 Internal Server Error\n');
   }
 });
 
-server.listen(port, '127.0.0.1', () => {
-  console.log(`serve.ts: http://127.0.0.1:${port}/  (root: ${root})`);
+server.listen(PORT, HOST, () => {
+  console.log(`serve.ts: http://${HOST}:${PORT}/`);
 });

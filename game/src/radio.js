@@ -1,157 +1,130 @@
-// NEON BAY: SUNSET RUN — radio.js
-// Radio 3 stasiun: sequencer WebAudio per stasiun (bpm/wave/root/scale/bass
-// dari RADIO_STATIONS). currentName() bekerja meski audio suspended.
-// Ditulis fresh di sesi terekam ronde 6, dari design spec §3 + §5.
+// radio.js — Radio 3 stasiun, sequencer WebAudio — GTA 6 R7
+// Spec §3 + §5. NEON 99.1 (synthwave arp, bpm 112, sawtooth, root 55,
+// scale [0,3,5,7,10,12,15], bass), OMBO 98.4 (bass groove, bpm 96, square,
+// root 49, scale [0,3,5,10,12], bass), VICE FM (chill pads, bpm 72,
+// triangle, root 65.4, scale [0,2,4,7,9,12], no bass).
+// Sequencer TIDAK PERNAH throw bila AudioContext belum ada / suspended.
 
-import { RADIO_STATIONS } from './config.js';
+export const RADIO_STATIONS = [
+  { name: 'NEON 99.1', bpm: 112, wave: 'sawtooth', root: 55, scale: [0, 3, 5, 7, 10, 12, 15], bass: true },
+  { name: 'OMBO 98.4', bpm: 96, wave: 'square', root: 49, scale: [0, 3, 5, 10, 12], bass: true },
+  { name: 'VICE FM', bpm: 72, wave: 'triangle', root: 65.4, scale: [0, 2, 4, 7, 9, 12], bass: false },
+];
+
+function noteFreq(root, semitone) {
+  return root * Math.pow(2, semitone / 12);
+}
 
 export class Radio {
   constructor(audioSys = null) {
-    this.audioSys = audioSys;
     this.index = 0;
     this.playing = false;
-    this._timer = null;
+    this.audioSys = audioSys; // AudioSys opsional (injeksi dari main.js)
     this._step = 0;
+    this._timer = null;
     this._nextTime = 0;
-    this._ctx = null; // context sendiri bila tanpa audioSys
-    this._master = null;
-    this._gesture = false;
-    this._onGesture = () => { this._gesture = true; };
-    window.addEventListener('pointerdown', this._onGesture);
-    window.addEventListener('keydown', this._onGesture);
   }
 
-  get stations() {
-    return RADIO_STATIONS;
+  get stations() { return RADIO_STATIONS; }
+
+  current() {
+    return RADIO_STATIONS[this.index % RADIO_STATIONS.length];
   }
 
   currentName() {
-    const st = RADIO_STATIONS[this.index % RADIO_STATIONS.length];
-    return st ? st.name : 'RADIO';
-  }
-
-  currentStation() {
-    return RADIO_STATIONS[this.index % RADIO_STATIONS.length];
+    return this.current().name;
   }
 
   next() {
     this.index = (this.index + 1) % RADIO_STATIONS.length;
     this._step = 0;
-    if (this.playing) {
-      this._nextTime = 0;
-      this._restartScheduler();
-    }
+    if (this.playing) this._restartSequencer();
     return this.currentName();
   }
 
   setPlaying(b) {
-    const want = !!b;
-    if (want === this.playing && this._timer) return;
-    this.playing = want;
-    if (want) this._startScheduler();
-    else this._stopScheduler();
-  }
-
-  _ctxOf() {
-    if (this.audioSys) {
-      const ctx = this.audioSys.ensureCtx ? this.audioSys.ensureCtx() : this.audioSys.ctx;
-      return { ctx, master: this.audioSys.master || null, muted: !!this.audioSys.muted };
-    }
-    if (!this._ctx) {
-      try {
-        const AC = window.AudioContext || window.webkitAudioContext;
-        if (!AC) return { ctx: null, master: null, muted: false };
-        this._ctx = new AC();
-        this._master = this._ctx.createGain();
-        this._master.gain.value = 0.4;
-        this._master.connect(this._ctx.destination);
-      } catch (err) {
-        return { ctx: null, master: null, muted: false };
-      }
-    }
-    return { ctx: this._ctx, master: this._master, muted: false };
-  }
-
-  _startScheduler() {
-    this._stopScheduler();
-    this._step = 0;
-    this._nextTime = 0;
-    this._timer = setInterval(() => this._tick(), 90);
-  }
-
-  _restartScheduler() {
-    this._startScheduler();
-  }
-
-  _stopScheduler() {
-    if (this._timer) {
-      clearInterval(this._timer);
-      this._timer = null;
-    }
-  }
-
-  _tick() {
+    this.playing = !!b;
     try {
-      if (!this.playing) return;
-      const { ctx, master, muted } = this._ctxOf();
-      if (!ctx || !master) return;
-      if (this.audioSys && this.audioSys.resume) this.audioSys.resume();
-      else if (ctx.state === 'suspended') {
-        const p = ctx.resume();
-        if (p && p.catch) p.catch(() => {});
-      }
-      // Bila masih suspended, majukan jadwal tanpa bunyi (tanpa backlog).
-      if (ctx.state !== 'running') {
-        this._nextTime = Math.max(this._nextTime, ctx.currentTime + 0.1);
-        return;
-      }
-      if (this._nextTime < ctx.currentTime - 0.05) this._nextTime = ctx.currentTime + 0.05;
-      while (this._nextTime < ctx.currentTime + 0.28) {
-        if (!muted) this._scheduleStep(ctx, master, this._nextTime, this._step);
-        const st = this.currentStation();
-        this._nextTime += 60 / st.bpm / 4;
-        this._step += 1;
-      }
-    } catch (err) { /* sequencer tidak pernah throw */ }
+      if (this.playing) this._startSequencer();
+      else this._stopSequencer();
+    } catch (e) { /* tidak pernah throw */ }
+    return this.playing;
   }
 
-  _scheduleStep(ctx, master, t0, step) {
+  // Dipanggil main loop tiap frame (opsional; sequencer utama via timer).
+  update() {
+    return this.playing;
+  }
+
+  _audioCtx() {
     try {
-      const st = this.currentStation();
-      const semi = (deg) => st.root * Math.pow(2, deg / 12);
-      const scale = st.scale;
-      // Pola arp deterministik 16 langkah (ulang tiap bar).
-      const arp = [0, 2, 1, 3, 2, 4, 3, 5, 4, 2, 5, 3, 6, 4, 2, 1];
-      const degIdx = arp[step % 16] % scale.length;
-      const note = semi(scale[degIdx]);
-      const beat = step % 4 === 0;
-      // Lead: tiap langkah genap, lebih keras di ketukan.
-      if (step % 2 === 0) {
-        this._note(ctx, master, note * 2, t0, 60 / st.bpm / 4 * 0.9, st.wave, beat ? 0.05 : 0.03);
+      if (this.audioSys) {
+        const ctx = this.audioSys.ensure ? this.audioSys.ensure() : this.audioSys.ctx;
+        if (ctx && ctx.state === 'running') return ctx;
+        return null;
       }
-      // Bass: tiap ketukan bila stasiun punya bass.
-      if (st.bass && beat) {
-        this._note(ctx, master, semi(0) / 2, t0, 60 / st.bpm / 2, 'sine', 0.09);
-      }
-      // Pad lembut tiap awal bar untuk VICE FM.
-      if (!st.bass && step % 16 === 0) {
-        this._note(ctx, master, semi(scale[0]), t0, 60 / st.bpm * 4, 'triangle', 0.04);
-        this._note(ctx, master, semi(scale[2]), t0, 60 / st.bpm * 4, 'triangle', 0.03);
-      }
-    } catch (err) { /* abaikan */ }
+      return null;
+    } catch (e) {
+      return null;
+    }
   }
 
-  _note(ctx, master, freq, t0, dur, type, gain) {
+  _startSequencer() {
+    this._stopSequencer();
+    if (typeof setInterval === 'undefined') return;
+    const st = this.current();
+    const stepDur = 60 / st.bpm / 2; // 8th notes
+    this._timer = setInterval(() => {
+      try { this._playStep(st, stepDur); } catch (e) { /* abaikan */ }
+    }, Math.max(40, stepDur * 1000));
+  }
+
+  _restartSequencer() {
+    if (!this.playing) return;
+    this._startSequencer();
+  }
+
+  _stopSequencer() {
+    if (this._timer) { clearInterval(this._timer); this._timer = null; }
+  }
+
+  _playStep(st, stepDur) {
+    const ctx = this._audioCtx();
+    if (!ctx) return; // belum ada gesture / suspended -> diam, tanpa throw
+    const t0 = ctx.currentTime + 0.02;
+    const scale = st.scale;
+    const deg = scale[this._step % scale.length] + 12 * Math.floor(this._step / scale.length) % 2;
+    // Melodi arp: naik-turun tangga nada.
+    const arpIdx = [0, 2, 1, 3, 2, 4, 3, 5][this._step % 8];
+    const semi = scale[arpIdx % scale.length] + 12;
     const osc = ctx.createOscillator();
+    osc.type = st.wave;
+    osc.frequency.setValueAtTime(noteFreq(st.root, semi), t0);
     const g = ctx.createGain();
-    osc.type = type || 'sawtooth';
-    osc.frequency.value = freq;
     g.gain.setValueAtTime(0.0001, t0);
-    g.gain.exponentialRampToValueAtTime(Math.max(0.0001, gain), t0 + 0.015);
-    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    g.gain.exponentialRampToValueAtTime(0.08, t0 + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + stepDur * 0.95);
     osc.connect(g);
+    const master = (this.audioSys && this.audioSys._master) || ctx.destination;
     g.connect(master);
     osc.start(t0);
-    osc.stop(t0 + dur + 0.05);
+    osc.stop(t0 + stepDur);
+    // Bass tiap 4 langkah, bila stasiun punya bass.
+    if (st.bass && this._step % 4 === 0) {
+      const b = ctx.createOscillator();
+      b.type = 'sine';
+      b.frequency.setValueAtTime(noteFreq(st.root, scale[0]), t0);
+      const bg = ctx.createGain();
+      bg.gain.setValueAtTime(0.0001, t0);
+      bg.gain.exponentialRampToValueAtTime(0.12, t0 + 0.02);
+      bg.gain.exponentialRampToValueAtTime(0.001, t0 + stepDur * 3.8);
+      b.connect(bg);
+      bg.connect(master);
+      b.start(t0);
+      b.stop(t0 + stepDur * 4);
+    }
+    this._step++;
   }
 }
+
+export default Radio;

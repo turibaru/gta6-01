@@ -1,48 +1,54 @@
-// NEON BAY: SUNSET RUN — main.ts (entrypoint dossier make.fun)
+// main.ts — entrypoint build dossier untuk bounty make.fun gta6-01.
 // Node 22 stdlib saja, erasable TypeScript, jalan langsung `node main.ts`.
-// Menyalin game/ + screenshots/ dari repo ke dir output, lalu menulis
-// dossier.json via buildDossier dari ./vendor/makefun-game.ts (file kit).
-// Ditulis fresh di sesi terekam ronde 6, dari design spec §12.
-
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+// Menyalin game/ + screenshots/ dari repo ke output dir (env
+// MAKEFUN_OUTPUT_DIR, default /output), lalu menulis dossier.json via
+// buildDossier dari ./vendor/makefun-game.ts (file kit — jangan diubah).
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-game.ts';
 
-const repoRoot = resolve(fileURLToPath(new URL('.', import.meta.url)));
-const outputDir = resolve(process.env.MAKEFUN_OUTPUT_DIR || '/output');
+const REPO_ROOT = dirname(fileURLToPath(import.meta.url));
+const GAME_DIR = join(REPO_ROOT, 'game');
+const SHOTS_DIR = join(REPO_ROOT, 'screenshots');
+const OUTPUT_DIR = resolve(process.env.MAKEFUN_OUTPUT_DIR ?? '/output');
 
-const gameDir = join(repoRoot, 'game');
-const shotsDir = join(repoRoot, 'screenshots');
-
-if (!existsSync(gameDir) || !statSync(gameDir).isDirectory()) {
-  throw new Error(`main.ts: game/ tidak ditemukan di ${repoRoot} — repo harus berisi game/ (game/index.html wajib ada)`);
-}
-if (!existsSync(join(gameDir, 'index.html')) || !statSync(join(gameDir, 'index.html')).isFile()) {
-  throw new Error('main.ts: game/index.html tidak ditemukan — entry wajib punya game/index.html');
-}
-if (!existsSync(shotsDir) || !statSync(shotsDir).isDirectory()) {
-  throw new Error(`main.ts: screenshots/ tidak ditemukan di ${repoRoot} — repo harus berisi screenshots/ (3-4 gambar PNG/JPEG)`);
+function fail(message: string): never {
+  throw new Error(`main.ts: ${message}`);
 }
 
-// Siapkan dir output. PENTING: kosongkan HANYA ISI dir output (readdir +
-// rmSync tiap entri) — JANGAN PERNAH rmSync dir output itu sendiri:
-// /output adalah mount point di sandbox grader, rmdir gagal EBUSY.
-mkdirSync(outputDir, { recursive: true });
-for (const entry of readdirSync(outputDir)) {
-  rmSync(join(outputDir, entry), { recursive: true, force: true });
+// Validasi input sebelum menyentuh output dir. (Dossier ditulis setelah
+// salinan game/ + screenshots/ lengkap, supaya buildDossier membaca hasil
+// salinan yang sama dengan yang diserahkan grader.)
+if (!existsSync(GAME_DIR) || !statSync(GAME_DIR).isDirectory()) {
+  fail(`game/ tidak ditemukan di repo (${GAME_DIR}) — game/ wajib ada.`);
+}
+if (!existsSync(join(GAME_DIR, 'index.html'))) {
+  fail('game/index.html tidak ditemukan — game/ wajib berisi index.html.');
+}
+if (!existsSync(SHOTS_DIR) || !statSync(SHOTS_DIR).isDirectory()) {
+  fail(`screenshots/ tidak ditemukan di repo (${SHOTS_DIR}) — screenshots/ wajib ada.`);
 }
 
-cpSync(gameDir, join(outputDir, 'game'), { recursive: true });
-cpSync(shotsDir, join(outputDir, 'screenshots'), { recursive: true });
+// Siapkan output dir. PENTING: kosongkan HANYA ISI dir output (readdir +
+// rmSync tiap entri) — JANGAN PERNAH rmSync dir output itu sendiri, karena
+// /output adalah mount point di sandbox grader (rmdir gagal EBUSY).
+mkdirSync(OUTPUT_DIR, { recursive: true });
+for (const entry of readdirSync(OUTPUT_DIR)) {
+  rmSync(join(OUTPUT_DIR, entry), { recursive: true, force: true });
+}
 
-const dossier = buildDossier(outputDir, {
+// Salin game/ + screenshots/ ke output dir.
+cpSync(GAME_DIR, join(OUTPUT_DIR, 'game'), { recursive: true });
+cpSync(SHOTS_DIR, join(OUTPUT_DIR, 'screenshots'), { recursive: true });
+
+// Tulis dossier.json via kit.
+const dossier = buildDossier(OUTPUT_DIR, {
   text_max_bytes: 163840,
   screenshots: { max: 4, max_bytes: 262144 },
   game_max_files: 993,
   game_max_bytes: 50331648,
 });
-
-const dossierPath = join(outputDir, 'dossier.json');
+const dossierPath = join(OUTPUT_DIR, 'dossier.json');
 writeFileSync(dossierPath, dossier);
 console.log(`main.ts: dossier.json ${dossier.length} bytes -> ${dossierPath}`);

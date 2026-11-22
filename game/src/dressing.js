@@ -1,132 +1,102 @@
-// NEON BAY: SUNSET RUN — dressing.js
-// Detail kota kecil di trotoar (JANGAN di tengah jalan): lampu jalan, rambu,
-// tempat sampah, bangku. InstancedMesh supaya ringan.
-// Ditulis fresh di sesi terekam ronde 6, dari design spec §5.
+// dressing.js — Detail kota kecil di trotoar — GTA 6 R7
+// Spec §5 + §17.4/§17.7c. dressWorld(scene, worldData): lampu jalan, rambu,
+// tempat sampah, bangku, detail kota kecil di trotoar (JANGAN di tengah
+// jalan). WAJIB reuse geometry + material yang sama (jangan buat geometry
+// baru per prop); semua deterministik dari seed 20261121.
 
-import { ROAD_POS, BLOCK_CENTERS, mulberry32 } from './world.js';
+export const ROAD_POS = [-208, -156, -104, -52, 0, 52, 104, 156, 208];
 
-export function dressWorld(scene, worldData) {
-  const THREE = window.THREE;
-  if (!THREE || !scene) return;
-  const roads = (worldData && worldData.roadPos) || ROAD_POS;
-  const blocks = (worldData && worldData.blockCenters) || BLOCK_CENTERS;
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+export function dressWorld(scene, worldData, THREE) {
+  const T = THREE || (typeof globalThis !== 'undefined' ? globalThis.THREE : null);
+  if (!scene || !T) return { count: 0 };
   const rng = mulberry32(20261121);
 
-  const lampSpots = []; // {x, z}
-  const binSpots = [];
-  const benchSpots = [];
-  const signSpots = [];
+  // --- geometry + material DIBAGI (reuse, §17.7c) ---
+  const poleGeo = new T.BoxGeometry(0.18, 5.2, 0.18);
+  const lampHeadGeo = new T.BoxGeometry(0.9, 0.18, 0.3);
+  const lampBulbGeo = new T.SphereGeometry(0.22, 8, 6);
+  const signPoleGeo = new T.BoxGeometry(0.12, 2.6, 0.12);
+  const signGeo = new T.BoxGeometry(0.9, 0.9, 0.06);
+  const binGeo = new T.CylinderGeometry(0.4, 0.35, 0.9, 10);
+  const benchSeatGeo = new T.BoxGeometry(1.8, 0.12, 0.55);
+  const benchLegGeo = new T.BoxGeometry(0.12, 0.45, 0.5);
+  const planterGeo = new T.BoxGeometry(1.1, 0.5, 1.1);
+  const bushGeo = new T.SphereGeometry(0.55, 8, 6);
 
-  // Lampu jalan: di tepi jalan (offset ±7.5 m dari garis tengah), tiap 52 m,
-  // sisi bergantian — tidak pernah di tengah jalan.
-  for (const rp of roads) {
-    for (let d = -208; d <= 208; d += 52) {
-      const side = ((d / 52) % 2 === 0) ? 7.5 : -7.5;
-      lampSpots.push({ x: rp + side, z: d });
-      lampSpots.push({ x: d, z: rp - side });
-    }
-  }
-  // Tempat sampah + bangku + rambu di sudut trotoar tiap blok.
-  for (const bx of blocks) {
-    for (const bz of blocks) {
-      const r = rng();
-      const cx = bx + (rng() < 0.5 ? -18 : 18);
-      const cz = bz + (rng() < 0.5 ? -18 : 18);
-      if (r < 0.4) binSpots.push({ x: cx, z: cz });
-      else if (r < 0.62) benchSpots.push({ x: cx, z: cz, rot: rng() * Math.PI });
-      if (rng() < 0.3) {
-        signSpots.push({ x: bx + 19, z: bz + 19, rot: rng() * Math.PI * 2 });
+  const poleMat = new T.MeshLambertMaterial({ color: 0x334155 });
+  const bulbMat = new T.MeshLambertMaterial({ color: 0xffe9a8, emissive: 0xffd27a, emissiveIntensity: 0.9 });
+  const signMat = new T.MeshLambertMaterial({ color: 0xdc2626 });
+  const signMat2 = new T.MeshLambertMaterial({ color: 0x2563eb });
+  const binMat = new T.MeshLambertMaterial({ color: 0x475569 });
+  const benchMat = new T.MeshLambertMaterial({ color: 0x92400e });
+  const planterMat = new T.MeshLambertMaterial({ color: 0x57534e });
+  const bushMat = new T.MeshLambertMaterial({ color: 0x166534 });
+
+  const add = (mesh, x, y, z) => {
+    mesh.position.set(x, y, z);
+    scene.add(mesh);
+    return mesh;
+  };
+
+  let count = 0;
+  // Lampu jalan + rambu di tiap persimpangan utama (jalan x jalan),
+  // 8-9 m dari sumbu jalan = di trotoar, bukan di tengah jalan.
+  for (const rx of ROAD_POS) {
+    for (const rz of ROAD_POS) {
+      if (Math.abs(rx) > 208 || Math.abs(rz) > 208) continue;
+      // Lampu jalan di 2 sudut persimpangan (deterministik: hanya bila rng < 0.5).
+      if (rng() < 0.55) {
+        const sx = rx + 8.5;
+        const sz = rz + 8.5;
+        add(new T.Mesh(poleGeo, poleMat), sx, 2.6, sz);
+        add(new T.Mesh(lampHeadGeo, poleMat), sx - 0.3, 5.2, sz);
+        add(new T.Mesh(lampBulbGeo, bulbMat), sx - 0.7, 5.1, sz);
+        count += 3;
+      }
+      // Rambu di sudut berlawanan.
+      if (rng() < 0.5) {
+        const sx = rx - 8.5;
+        const sz = rz - 8.5;
+        add(new T.Mesh(signPoleGeo, poleMat), sx, 1.3, sz);
+        add(new T.Mesh(signGeo, rng() < 0.5 ? signMat : signMat2), sx, 2.7, sz);
+        count += 2;
       }
     }
   }
-
-  const dummy = new THREE.Object3D();
-
-  // Tiang lampu (instanced).
-  if (lampSpots.length) {
-    const poleGeo = new THREE.CylinderGeometry(0.09, 0.12, 5.2, 6);
-    const poleMat = new THREE.MeshLambertMaterial({ color: 0x2e3440 });
-    const poles = new THREE.InstancedMesh(poleGeo, poleMat, lampSpots.length);
-    const headGeo = new THREE.SphereGeometry(0.32, 8, 6);
-    const headMat = new THREE.MeshBasicMaterial({ color: 0xffd27a });
-    const heads = new THREE.InstancedMesh(headGeo, headMat, lampSpots.length);
-    lampSpots.forEach((p, i) => {
-      dummy.position.set(p.x, 2.6, p.z);
-      dummy.rotation.set(0, 0, 0);
-      dummy.scale.set(1, 1, 1);
-      dummy.updateMatrix();
-      poles.setMatrixAt(i, dummy.matrix);
-      dummy.position.set(p.x, 5.3, p.z);
-      dummy.updateMatrix();
-      heads.setMatrixAt(i, dummy.matrix);
-    });
-    poles.instanceMatrix.needsUpdate = true;
-    heads.instanceMatrix.needsUpdate = true;
-    scene.add(poles);
-    scene.add(heads);
+  // Tempat sampah + bangku + planter di sepanjang trotoar jalan utama.
+  for (const road of ROAD_POS) {
+    for (let along = -200; along <= 200; along += 52) {
+      const off = 8.2;
+      if (rng() < 0.4) {
+        add(new T.Mesh(binGeo, binMat), road + off, 0.45, along);
+        count++;
+      }
+      if (rng() < 0.3) {
+        const bx = road - off;
+        const bz = along + 10;
+        add(new T.Mesh(benchSeatGeo, benchMat), bx, 0.5, bz);
+        add(new T.Mesh(benchLegGeo, benchMat), bx - 0.7, 0.22, bz);
+        add(new T.Mesh(benchLegGeo, benchMat), bx + 0.7, 0.22, bz);
+        count += 3;
+      }
+      if (rng() < 0.3) {
+        add(new T.Mesh(planterGeo, planterMat), road + off, 0.25, along + 26);
+        add(new T.Mesh(bushGeo, bushMat), road + off, 0.75, along + 26);
+        count += 2;
+      }
+    }
   }
-
-  // Tempat sampah (instanced box hijau gelap).
-  if (binSpots.length) {
-    const geo = new THREE.BoxGeometry(0.7, 0.9, 0.7);
-    const mat = new THREE.MeshLambertMaterial({ color: 0x14532d });
-    const bins = new THREE.InstancedMesh(geo, mat, binSpots.length);
-    binSpots.forEach((p, i) => {
-      dummy.position.set(p.x, 0.45, p.z);
-      dummy.rotation.set(0, 0, 0);
-      dummy.scale.set(1, 1, 1);
-      dummy.updateMatrix();
-      bins.setMatrixAt(i, dummy.matrix);
-    });
-    bins.instanceMatrix.needsUpdate = true;
-    scene.add(bins);
-  }
-
-  // Bangku (instanced: dudukan + sandaran sebagai dua mesh).
-  if (benchSpots.length) {
-    const seatGeo = new THREE.BoxGeometry(2.2, 0.12, 0.6);
-    const seatMat = new THREE.MeshLambertMaterial({ color: 0x7c4a21 });
-    const seats = new THREE.InstancedMesh(seatGeo, seatMat, benchSpots.length);
-    const backGeo = new THREE.BoxGeometry(2.2, 0.7, 0.1);
-    const backs = new THREE.InstancedMesh(backGeo, seatMat, benchSpots.length);
-    benchSpots.forEach((p, i) => {
-      dummy.rotation.set(0, p.rot || 0, 0);
-      dummy.scale.set(1, 1, 1);
-      dummy.position.set(p.x, 0.5, p.z);
-      dummy.updateMatrix();
-      seats.setMatrixAt(i, dummy.matrix);
-      dummy.position.set(p.x - Math.sin(p.rot || 0) * 0.28, 0.85, p.z - Math.cos(p.rot || 0) * 0.28);
-      dummy.updateMatrix();
-      backs.setMatrixAt(i, dummy.matrix);
-    });
-    seats.instanceMatrix.needsUpdate = true;
-    backs.instanceMatrix.needsUpdate = true;
-    scene.add(seats);
-    scene.add(backs);
-  }
-
-  // Rambu jalan (instanced: tiang + papan warna).
-  if (signSpots.length) {
-    const poleGeo = new THREE.CylinderGeometry(0.05, 0.05, 2.4, 6);
-    const poleMat = new THREE.MeshLambertMaterial({ color: 0x9ca3af });
-    const poles = new THREE.InstancedMesh(poleGeo, poleMat, signSpots.length);
-    const boardGeo = new THREE.PlaneGeometry(0.9, 0.9);
-    const boardMat = new THREE.MeshBasicMaterial({ color: 0xf59e0b, side: THREE.DoubleSide });
-    const boards = new THREE.InstancedMesh(boardGeo, boardMat, signSpots.length);
-    signSpots.forEach((p, i) => {
-      dummy.rotation.set(0, 0, 0);
-      dummy.scale.set(1, 1, 1);
-      dummy.position.set(p.x, 1.2, p.z);
-      dummy.updateMatrix();
-      poles.setMatrixAt(i, dummy.matrix);
-      dummy.position.set(p.x, 2.5, p.z);
-      dummy.rotation.set(0, p.rot || 0, 0);
-      dummy.updateMatrix();
-      boards.setMatrixAt(i, dummy.matrix);
-    });
-    poles.instanceMatrix.needsUpdate = true;
-    boards.instanceMatrix.needsUpdate = true;
-    scene.add(poles);
-    scene.add(boards);
-  }
+  return { count };
 }
+
+export default dressWorld;

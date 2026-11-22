@@ -1,104 +1,115 @@
-// NEON BAY: SUNSET RUN — input.js
-// Keyboard + mouse: state gerak untuk entities + edge-trigger sekali per tekan.
-// Ditulis fresh di sesi terekam ronde 6, dari design spec §5.
+// input.js — Keyboard + mouse — GTA 6 R7
+// Spec §5. WASD/panah, SHIFT, E, SPASI, F, 1-5, R, G, P/ESC, M, ENTER.
+// Mouse click = tembak. Edge-trigger untuk ENTER/E/F/G/R (sekali per tekan).
 
 export class Input {
   constructor() {
-    this.state = {
-      up: false, down: false, left: false, right: false,
-      run: false, handbrake: false,
-    };
-    this._down = new Set(); // code/key yang sedang ditekan
-    this._pressed = new Set(); // edge-trigger: nama aksi sekali per tekan
+    this.keys = new Set(); // kode yang sedang ditekan (event.code)
+    this.pressed = new Set(); // edge: baru ditekan sejak frame terakhir
+    this.mouseClicked = false; // edge klik mouse
     this.mouseDown = false;
-    this._onKeyDown = (e) => this._key(e, true);
-    this._onKeyUp = (e) => this._key(e, false);
+    this._attached = false;
+    this._onKeyDown = (e) => {
+      if (e.repeat) return;
+      if (!this.keys.has(e.code)) this.pressed.add(e.code);
+      this.keys.add(e.code);
+      // Cegah scroll halaman oleh panah / spasi saat bermain.
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) {
+        if (e.preventDefault) e.preventDefault();
+      }
+    };
+    this._onKeyUp = (e) => { this.keys.delete(e.code); };
     this._onMouseDown = () => {
+      if (!this.mouseDown) this.mouseClicked = true;
       this.mouseDown = true;
-      this._pressed.add('shoot');
     };
     this._onMouseUp = () => { this.mouseDown = false; };
-    this._onBlur = () => {
-      this._down.clear();
-      this.mouseDown = false;
-      this._syncState();
-    };
-    window.addEventListener('keydown', this._onKeyDown);
-    window.addEventListener('keyup', this._onKeyUp);
-    window.addEventListener('mousedown', this._onMouseDown);
-    window.addEventListener('mouseup', this._onMouseUp);
-    window.addEventListener('blur', this._onBlur);
+    this._onBlur = () => { this.keys.clear(); this.mouseDown = false; };
   }
 
-  // Nama aksi dari event keyboard (dukung e.code maupun e.key, supaya
-  // KeyboardEvent sintetis dari playtest juga terbaca).
-  _actionOf(e) {
-    const code = e.code || '';
-    const key = (e.key || '').toLowerCase();
-    const byCode = {
-      KeyW: 'up', ArrowUp: 'up', KeyS: 'down', ArrowDown: 'down',
-      KeyA: 'left', ArrowLeft: 'left', KeyD: 'right', ArrowRight: 'right',
-      ShiftLeft: 'run', ShiftRight: 'run', Space: 'space',
-      KeyE: 'e', KeyF: 'f', KeyG: 'g', KeyR: 'r', KeyP: 'p', KeyM: 'm',
-      Enter: 'enter', Escape: 'p',
-      Digit1: 'digit1', Digit2: 'digit2', Digit3: 'digit3', Digit4: 'digit4',
-    };
-    if (byCode[code]) return byCode[code];
-    const byKey = {
-      w: 'up', arrowup: 'up', s: 'down', arrowdown: 'down',
-      a: 'left', arrowleft: 'left', d: 'right', arrowright: 'right',
-      shift: 'run', ' ': 'space', e: 'e', f: 'f', g: 'g', r: 'r',
-      p: 'p', m: 'm', enter: 'enter', escape: 'p',
-      1: 'digit1', 2: 'digit2', 3: 'digit3', 4: 'digit4',
-    };
-    return byKey[key] || null;
+  attach(target) {
+    if (this._attached || typeof window === 'undefined') return this;
+    const t = target || window;
+    t.addEventListener('keydown', this._onKeyDown);
+    t.addEventListener('keyup', this._onKeyUp);
+    t.addEventListener('mousedown', this._onMouseDown);
+    t.addEventListener('mouseup', this._onMouseUp);
+    t.addEventListener('blur', this._onBlur);
+    this._attached = true;
+    return this;
   }
 
-  _key(e, isDown) {
-    const action = this._actionOf(e);
-    const id = e.code || e.key || '';
-    if (action === 'space' || action === 'up' || action === 'down' ||
-        action === 'left' || action === 'right') {
-      if (e.preventDefault) e.preventDefault();
-    }
-    if (isDown) {
-      if (!e.repeat && action) this._pressed.add(action);
-      if (id) this._down.add(id);
-      if (action) this._down.add('action:' + action);
-    } else {
-      if (id) this._down.delete(id);
-      if (action) this._down.delete('action:' + action);
-    }
-    this._syncState();
+  detach(target) {
+    if (!this._attached || typeof window === 'undefined') return this;
+    const t = target || window;
+    t.removeEventListener('keydown', this._onKeyDown);
+    t.removeEventListener('keyup', this._onKeyUp);
+    t.removeEventListener('mousedown', this._onMouseDown);
+    t.removeEventListener('mouseup', this._onMouseUp);
+    t.removeEventListener('blur', this._onBlur);
+    this._attached = false;
+    return this;
   }
 
-  _syncState() {
-    const has = (a) => this._down.has('action:' + a);
-    this.state.up = has('up');
-    this.state.down = has('down');
-    this.state.left = has('left');
-    this.state.right = has('right');
-    this.state.run = has('run');
-    this.state.handbrake = has('space');
+  // Apakah kode sedang ditekan (level).
+  down(...codes) {
+    return codes.some((c) => this.keys.has(c));
   }
 
-  // True sekali per tekan (konsumsi event). Nama: enter, e, f, g, r, p, m,
-  // digit1..digit4, space, shoot.
-  pressed(name) {
-    if (this._pressed.has(name)) {
-      this._pressed.delete(name);
-      return true;
-    }
-    return false;
+  // Apakah kode BARU ditekan frame ini (edge, sekali per tekan).
+  wasPressed(...codes) {
+    return codes.some((c) => this.pressed.has(c));
   }
 
-  // True selama tombol aksi sedang ditahan.
-  isDown(name) {
-    return this._down.has('action:' + name);
+  // Alias yang dipakai beberapa pemanggil.
+  pressedOnce(...codes) { return this.wasPressed(...codes); }
+
+  // Gerak: +1 maju, -1 mundur; belok +1 kanan, -1 kiri.
+  get forward() {
+    return (this.down('KeyW', 'ArrowUp') ? 1 : 0) - (this.down('KeyS', 'ArrowDown') ? 1 : 0);
   }
 
-  // Buang semua edge yang belum dikonsumsi (dipakai saat ganti state).
-  flush() {
-    this._pressed.clear();
+  get strafe() {
+    return (this.down('KeyD', 'ArrowRight') ? 1 : 0) - (this.down('KeyA', 'ArrowLeft') ? 1 : 0);
+  }
+
+  // Alias arah untuk entities.update (W/S/A/D + panah).
+  get up() { return this.down('KeyW', 'ArrowUp'); }
+  get downKey() { return this.down('KeyS', 'ArrowDown'); }
+  get left() { return this.down('KeyA', 'ArrowLeft'); }
+  get right() { return this.down('KeyD', 'ArrowRight'); }
+  get run() { return this.down('ShiftLeft', 'ShiftRight'); }
+  get handbrake() { return this.down('Space'); }
+
+  // Tembak: F (edge) atau klik mouse (edge).
+  get shootPressed() {
+    return this.wasPressed('KeyF') || this.mouseClicked;
+  }
+
+  // Dipanggil di AKHIR tiap frame oleh main loop: bersihkan edge.
+  endFrame() {
+    this.pressed.clear();
+    this.mouseClicked = false;
+    return this;
+  }
+
+  // Untuk tes / playtest sintetis: tekan & lepas kode secara programatik.
+  press(code) {
+    if (!this.keys.has(code)) this.pressed.add(code);
+    this.keys.add(code);
+    return this;
+  }
+
+  release(code) {
+    this.keys.delete(code);
+    return this;
+  }
+
+  click() {
+    this.mouseClicked = true;
+    this.mouseDown = true;
+    return this;
   }
 }
+
+export default Input;

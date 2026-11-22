@@ -1,198 +1,171 @@
-// NEON BAY: SUNSET RUN — entities.js
-// Semua entitas dunia: pemain (jalan kaki / nyetir), mobil pemain, lalu
-// lintas, pejalan kaki, polisi NBPD, heli, roadblock.
-// Ditulis fresh di sesi terekam ronde 6, dari design spec §3 dan §5.
+// entities.js — Pemain, mobil, traffic, pejalan kaki, polisi, heli — GTA 6 R7
+// Spec §5 + §17.2/§17.7. player spawn (0,26); playerCar spawn (0,30) —
+// 4 m di depan player di jalan x=0 (pelajaran R6: spawn di garage
+// (-52,104) membuat E gagal di spawn). Bike: controller arcade SAMA seperti
+// mobil dengan parameter bike (speed 48, accel 26, steer 2.3, radius 1.2),
+// TAPI damage tabrakan untuk bike dikurangi 50% (§17.7a).
+// traffic 14, peds 22, police cruiser, heli, roadblocks.
+// enterCar/exitCar (E), damagePlayer/damageCar, nearestCar, toSyncList
+// (sertakan model + alt).
 
-import { CONFIG, PLAYER_COLORS, clamp, dist2d, angleLerp, forward } from './config.js';
-import { ROAD_POS, BLOCK_CENTERS } from './world.js';
+export const ROAD_POS = [-208, -156, -104, -52, 0, 52, 104, 156, 208];
+export const PLAYER_SPAWN = { x: 0, z: 26 };
+export const PLAYER_CAR_SPAWN = { x: 0, z: 30 };
+export const TRAFFIC_COLORS = [
+  '#f59e0b', '#38bdf8', '#a3e635', '#e2e8f0', '#f472b6', '#94a3b8',
+  '#22d3ee', '#f43f5e', '#a78bfa', '#facc15', '#34d399', '#fb923c',
+];
+export const PED_COLORS = ['#f59e0b', '#38bdf8', '#a3e635', '#e2e8f0', '#f472b6', '#94a3b8', '#22d3ee', '#f43f5e'];
 
-const TAU = Math.PI * 2;
+export const CAR_PARAMS = {
+  sedan: { maxSpeed: 42, accel: 22, steer: 1.9, radius: 2.2, conditionMax: 100 },
+  sport: { maxSpeed: 48, accel: 26, steer: 2.1, radius: 2.2, conditionMax: 100 },
+  truck: { maxSpeed: 36, accel: 18, steer: 1.6, radius: 2.6, conditionMax: 120 },
+  bike: { maxSpeed: 48, accel: 26, steer: 2.3, radius: 1.2, conditionMax: 60 },
+};
 
-// Normalisasi sudut ke (-PI, PI].
-function normAngle(a) {
-  while (a > Math.PI) a -= TAU;
-  while (a <= -Math.PI) a += TAU;
-  return a;
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
 }
 
-// Titik acak di jalan (untuk spawn traffic / polisi).
-function randomRoadPoint(rng) {
-  const at = ROAD_POS[Math.floor(rng() * ROAD_POS.length)];
-  const along = -220 + rng() * 440;
-  if (rng() < 0.5) return { x: at, z: along, axis: 'z', road: at };
-  return { x: along, z: at, axis: 'x', road: at };
-}
-
-// Titik acak di trotoar (pinggir blok, bukan di dalam gedung).
-function randomSidewalkPoint(rng) {
-  const bx = BLOCK_CENTERS[Math.floor(rng() * BLOCK_CENTERS.length)];
-  const bz = BLOCK_CENTERS[Math.floor(rng() * BLOCK_CENTERS.length)];
-  const side = Math.floor(rng() * 4);
-  const off = -16 + rng() * 32;
-  if (side === 0) return { x: bx + off, z: bz - 19 };
-  if (side === 1) return { x: bx + off, z: bz + 19 };
-  if (side === 2) return { x: bx - 19, z: bz + off };
-  return { x: bx + 19, z: bz + off };
-}
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+function dist2d(ax, az, bx, bz) { return Math.hypot(ax - bx, az - bz); }
+function pickRoad(rng) { return ROAD_POS[Math.floor(rng() * ROAD_POS.length)]; }
 
 export class Entities {
-  constructor(world) {
+  constructor(world = null) {
     this.world = world;
-    this.rng = Math.random;
     this.player = null;
     this.playerCar = null;
     this.traffic = [];
     this.peds = [];
     this.police = [];
-    this.heli = { visible: false, x: 0, z: 0, alt: 20 };
+    this.heli = { visible: false, x: 0, z: 0, alt: 18 };
     this.roadblocks = [];
+    this.spawns = (world && world.spawnPoints) || {
+      player: { ...PLAYER_SPAWN },
+      garage: { x: -52, z: 104 },
+      pier: { x: 225, z: 0 },
+      hideout: { x: 78, z: -78 },
+      arcade: { x: 26, z: 182 },
+      extraction: { x: 208, z: -208 },
+    };
     this.reset();
   }
 
   reset() {
-    const s = this.world.spawnPoints;
     this.player = {
-      x: s.player.x, z: s.player.z, heading: 0,
-      hp: CONFIG.playerHpMax, inCar: false, car: null, speed: 0,
+      x: PLAYER_SPAWN.x, z: PLAYER_SPAWN.z, heading: Math.PI,
+      hp: 100, inCar: false, car: null,
     };
     this.playerCar = {
-      // Parkir 4 m di depan spawn pemain, di jalan x=0 (bukan di garage):
-      // pemain harus bisa masuk mobil dengan E tanpa jalan ~94 m dulu.
-      // Sistem garage/misi tetap pakai spawns.garage (bukan posisi awal
-      // ini): panel garage, mulai job, busted/respawn semua merujuk
-      // spawns.garage, jadi pemindahan ini tidak merusak alur itu.
-      x: s.player.x, z: s.player.z + 4, heading: 0,
-      speed: 0, condition: 100,
-      color: PLAYER_COLORS.playerCar, model: 'sedan',
-      engineLevel: 0,
+      x: PLAYER_CAR_SPAWN.x, z: PLAYER_CAR_SPAWN.z, heading: Math.PI,
+      speed: 0, condition: 100, color: '#ff2d78', model: 'sedan',
     };
-    this.player.car = this.playerCar;
     this.traffic = [];
     this.peds = [];
     this.police = [];
-    this.heli = { visible: false, x: 0, z: 0, alt: 20 };
+    this.heli = { visible: false, x: 0, z: 0, alt: 18 };
     this.roadblocks = [];
-    this.spawnTraffic(CONFIG.trafficCount);
-    this.spawnPeds(CONFIG.pedCount);
+    this.spawnTraffic(14);
+    this.spawnPeds(22);
+    return this;
   }
 
   respawnPlayerAt(x, z) {
     this.player.x = x;
     this.player.z = z;
-    this.player.heading = 0;
-    this.player.speed = 0;
+    this.player.hp = 100;
     this.player.inCar = false;
-    this.player.hp = CONFIG.playerHpMax;
-    const c = this.world.clampToWorld(this.player.x, this.player.z);
-    this.player.x = c.x;
-    this.player.z = c.z;
+    this.player.car = null;
+    if (this.playerCar) {
+      this.playerCar.x = x;
+      this.playerCar.z = z + 4;
+      this.playerCar.speed = 0;
+      this.playerCar.heading = Math.PI;
+    }
+    return this.player;
   }
 
-  // ---- Spawn ----
-
-  spawnTraffic(n) {
+  // --- spawn ---
+  spawnTraffic(n = 14) {
+    const rng = mulberry32(20261121);
     for (let i = 0; i < n; i++) {
-      const p = randomRoadPoint(this.rng);
-      const dir = this.rng() < 0.5 ? 1 : -1;
-      const lane = (this.rng() < 0.5 ? -1 : 1) * 2.8;
-      let x = p.x;
-      let z = p.z;
-      let heading = 0;
-      if (p.axis === 'z') {
-        x = p.road + lane;
-        heading = dir > 0 ? 0 : Math.PI;
-      } else {
-        z = p.road + lane;
-        heading = dir > 0 ? Math.PI / 2 : -Math.PI / 2;
-      }
-      const color = PLAYER_COLORS.traffic[
-        Math.floor(this.rng() * PLAYER_COLORS.traffic.length)];
+      const alongRoad = rng() < 0.5;
+      const road = pickRoad(rng);
+      const along = -220 + rng() * 440;
+      const dir = rng() < 0.5 ? 1 : -1;
       this.traffic.push({
-        x, z, heading,
-        speed: CONFIG.trafficSpeed * (0.8 + this.rng() * 0.4),
-        road: p.road, axis: p.axis, dir, lane,
-        color, model: this.rng() < 0.6 ? 'sedan' : 'sport',
+        x: alongRoad ? along : road,
+        z: alongRoad ? road : along,
+        heading: alongRoad ? (dir > 0 ? Math.PI / 2 : -Math.PI / 2) : (dir > 0 ? 0 : Math.PI),
+        speed: 9 + rng() * 4,
+        road, dir,
+        color: TRAFFIC_COLORS[i % TRAFFIC_COLORS.length],
+        model: ['sedan', 'sport', 'truck'][i % 3],
+        radius: 2.2,
       });
     }
+    return this.traffic;
   }
 
-  spawnPeds(n) {
-    const colors = ['#f59e0b', '#38bdf8', '#a3e635', '#e2e8f0', '#f472b6', '#94a3b8', '#fb7185'];
+  spawnPeds(n = 22) {
+    const rng = mulberry32(777);
     for (let i = 0; i < n; i++) {
-      const p = randomSidewalkPoint(this.rng);
+      // Di trotoar: 7-9 m dari sumbu jalan terdekat, jangan di tengah jalan.
+      const road = pickRoad(rng);
+      const along = -220 + rng() * 440;
+      const side = rng() < 0.5 ? -1 : 1;
+      const onXRoad = rng() < 0.5;
       this.peds.push({
-        x: p.x, z: p.z,
-        heading: this.rng() * TAU,
-        speed: 1.2 + this.rng() * 1.6,
-        color: colors[Math.floor(this.rng() * colors.length)],
+        x: onXRoad ? along : road + side * 8,
+        z: onXRoad ? road + side * 8 : along,
+        heading: rng() * Math.PI * 2,
+        speed: 1 + rng() * 1.5,
+        color: PED_COLORS[i % PED_COLORS.length],
         fleeing: false,
-        tx: p.x, tz: p.z, // target jalan
-        wait: this.rng() * 2,
+        height: 1.6 + rng() * 0.4,
+        radius: 0.6,
       });
     }
+    return this.peds;
   }
 
-  spawnPolice(count) {
-    const n = Math.min(count, CONFIG.policeCountMax);
-    for (let i = 0; i < n; i++) {
-      // Spawn di jalan, 30-60 m dari pemain, tersebar di beberapa arah.
-      const ang = (i / Math.max(1, n)) * TAU + this.rng() * 1.2;
-      const d = 32 + this.rng() * 26;
-      let x = this.player.x + Math.sin(ang) * d;
-      let z = this.player.z + Math.cos(ang) * d;
-      // Geser ke jalan terdekat supaya tidak muncul di dalam gedung.
-      let best = null;
-      let bestD = Infinity;
-      for (const rp of ROAD_POS) {
-        const dx = Math.abs(x - rp);
-        if (dx < bestD) { bestD = dx; best = { x: rp, z }; }
-        const dz = Math.abs(z - rp);
-        if (dz < bestD) { bestD = dz; best = { x, z: rp }; }
-      }
-      if (best) { x = best.x; z = best.z; }
-      const c = this.world.clampToWorld(x, z);
+  spawnPolice(count = 1) {
+    const n = clamp(Math.floor(count) || 0, 0, 4);
+    for (let i = this.police.length; i < n; i++) {
+      const a = (i / Math.max(1, n)) * Math.PI * 2;
       this.police.push({
-        x: c.x, z: c.z, heading: this.rng() * TAU,
-        speed: 0, color: PLAYER_COLORS.police, model: 'cruiser',
+        x: clamp(this.player.x + Math.sin(a) * 40, -235, 235),
+        z: clamp(this.player.z + Math.cos(a) * 40, -235, 235),
+        heading: 0, speed: 0,
+        color: '#1d4ed8', radius: 2.2, model: 'sedan',
       });
     }
+    // Roadblock di 3+ bintang, heli di 4+ bintang (diatur main.js via heat).
+    return this.police;
   }
 
   clearPolice() {
     this.police = [];
     this.heli.visible = false;
     this.roadblocks = [];
+    return this;
   }
 
-  spawnRoadblocks(count) {
-    // Hadang di jalan, di depan arah hadap pemain.
-    const f = forward(this.player.heading);
-    for (let i = 0; i < count; i++) {
-      const d = 26 + i * 18;
-      let x = this.player.x + f.x * d;
-      let z = this.player.z + f.z * d;
-      // Geser ke jalan terdekat.
-      let best = null;
-      let bestD = Infinity;
-      for (const rp of ROAD_POS) {
-        const dx = Math.abs(x - rp);
-        if (dx < bestD) { bestD = dx; best = { x: rp, z }; }
-        const dz = Math.abs(z - rp);
-        if (dz < bestD) { bestD = dz; best = { x, z: rp }; }
-      }
-      if (best) { x = best.x; z = best.z; }
-      const c = this.world.clampToWorld(x, z);
-      this.roadblocks.push({
-        x: c.x, z: c.z, heading: this.player.heading + Math.PI / 2,
-        color: '#f97316', model: 'barricade',
-      });
-    }
+  spawnRoadblock(x, z) {
+    this.roadblocks.push({ x, z, heading: 0, hp: 30, color: '#f59e0b', radius: 2.5 });
+    return this.roadblocks;
   }
-
-  // ---- Query ----
 
   nearestCopDist() {
-    if (this.police.length === 0) return Infinity;
+    if (!this.police.length) return Infinity;
     let best = Infinity;
     for (const c of this.police) {
       best = Math.min(best, dist2d(this.player.x, this.player.z, c.x, c.z));
@@ -200,36 +173,36 @@ export class Entities {
     return best;
   }
 
+  // Mobil terdekat dari pemain (playerCar + traffic), dalam maxDist.
   nearestCar(maxDist = 6) {
+    const px = this.player.x;
+    const pz = this.player.z;
     let best = null;
-    let bestD = maxDist;
-    const d0 = dist2d(this.player.x, this.player.z, this.playerCar.x, this.playerCar.z);
-    if (d0 <= bestD) { best = this.playerCar; bestD = d0; }
-    for (const t of this.traffic) {
-      const d = dist2d(this.player.x, this.player.z, t.x, t.z);
-      if (d <= bestD) { best = t; bestD = d; }
+    let bestDist = maxDist;
+    const candidates = [];
+    if (this.playerCar) candidates.push({ car: this.playerCar, isPlayerCar: true });
+    for (const t of this.traffic) candidates.push({ car: t, isPlayerCar: false });
+    for (const c of candidates) {
+      const d = dist2d(px, pz, c.car.x, c.car.z);
+      if (d <= bestDist) { best = c; bestDist = d; }
     }
-    return best;
+    return best; // { car, isPlayerCar } | null
   }
 
-  enterCar() {
+  // E: masuk mobil terdekat. ctx.heat (opsional) +12 bila mencuri traffic.
+  enterCar(ctx = {}) {
     if (this.player.inCar) return false;
-    const car = this.nearestCar(6);
-    if (!car) return false;
-    const stolen = car !== this.playerCar;
-    if (stolen) {
-      // Curi mobil traffic: jadikan mobil pemain, hapus dari traffic.
-      const idx = this.traffic.indexOf(car);
-      if (idx >= 0) this.traffic.splice(idx, 1);
-      this.playerCar = {
-        x: car.x, z: car.z, heading: car.heading, speed: 0,
-        condition: 100, color: car.color, model: car.model || 'sedan',
-        engineLevel: 0,
-      };
-      this.player.car = this.playerCar;
-      this._stolen = true;
+    const found = this.nearestCar(6);
+    if (!found) return false;
+    const { car, isPlayerCar } = found;
+    if (!isPlayerCar) {
+      // Curi mobil traffic: keluar dari traffic, jadi playerCar.
+      this.traffic = this.traffic.filter((t) => t !== car);
+      this.playerCar = car;
+      if (ctx.heat && typeof ctx.heat.add === 'function') ctx.heat.add(12);
     }
     this.player.inCar = true;
+    this.player.car = this.playerCar;
     this.player.x = this.playerCar.x;
     this.player.z = this.playerCar.z;
     this.player.heading = this.playerCar.heading;
@@ -237,304 +210,201 @@ export class Entities {
   }
 
   exitCar() {
-    if (!this.player.inCar) return false;
-    const car = this.playerCar;
-    const f = forward(car.heading);
-    // Turun di sisi kiri mobil.
-    const px = car.x - f.z * 3;
-    const pz = car.z + f.x * 3;
-    const c = this.world.clampToWorld(px, pz);
-    this.player.x = c.x;
-    this.player.z = c.z;
-    this.player.heading = car.heading;
-    this.player.speed = 0;
+    if (!this.player.inCar || !this.playerCar) return false;
+    const side = 3;
+    const px = this.playerCar.x + Math.cos(this.playerCar.heading) * side;
+    const pz = this.playerCar.z - Math.sin(this.playerCar.heading) * side;
+    this.player.x = clamp(px, -238, 238);
+    this.player.z = clamp(pz, -238, 238);
     this.player.inCar = false;
+    this.player.car = null;
+    this.player.heading = this.playerCar.heading;
     return true;
   }
 
   damagePlayer(n) {
-    this.player.hp = clamp(this.player.hp - n, 0, CONFIG.playerHpMax);
+    this.player.hp = Math.max(0, this.player.hp - (n || 0));
     return this.player.hp;
   }
 
+  // §17.7a: damage tabrakan untuk bike dikurangi 50%.
   damageCar(car, n) {
-    car.condition = clamp((car.condition ?? 100) - n, 0, 100);
+    if (!car) return 0;
+    let dmg = n || 0;
+    if (car.model === 'bike') dmg *= 0.5;
+    car.condition = Math.max(0, (car.condition == null ? 100 : car.condition) - dmg);
     return car.condition;
   }
 
-  // ---- Tabrakan ----
-
-  // Dorong lingkaran (x,z,r) keluar dari collider AABB. Kembalikan true bila menabrak.
-  _collideBuildings(pos, r) {
-    let hit = false;
-    for (const b of this.world.colliders) {
-      const cx = clamp(pos.x, b.x0, b.x1);
-      const cz = clamp(pos.z, b.z0, b.z1);
-      const dx = pos.x - cx;
-      const dz = pos.z - cz;
-      const d2 = dx * dx + dz * dz;
-      if (d2 < r * r) {
-        hit = true;
-        if (d2 > 0.0001) {
-          const d = Math.sqrt(d2);
-          pos.x = cx + (dx / d) * r;
-          pos.z = cz + (dz / d) * r;
-        } else {
-          // Pusat di dalam AABB: dorong keluar lewat sisi terdekat.
-          const left = pos.x - b.x0;
-          const right = b.x1 - pos.x;
-          const top = pos.z - b.z0;
-          const bottom = b.z1 - pos.z;
-          const m = Math.min(left, right, top, bottom);
-          if (m === left) pos.x = b.x0 - r;
-          else if (m === right) pos.x = b.x1 + r;
-          else if (m === top) pos.z = b.z0 - r;
-          else pos.z = b.z1 + r;
-        }
-      }
+  // --- tabrakan gedung (AABB dari world.colliders) ---
+  _collidesBuilding(x, z, radius) {
+    const colliders = (this.world && this.world.colliders) || [];
+    for (const c of colliders) {
+      if (x + radius > c.x0 && x - radius < c.x1 && z + radius > c.z0 && z - radius < c.z1) return c;
     }
-    return hit;
+    return null;
   }
 
-  _circleHit(ax, az, ar, bx, bz, br) {
-    const dx = ax - bx;
-    const dz = az - bz;
-    const rr = ar + br;
-    return dx * dx + dz * dz < rr * rr;
+  _clampWorld(x, z) {
+    if (this.world && typeof this.world.clampToWorld === 'function') {
+      return this.world.clampToWorld(x, z);
+    }
+    return { x: clamp(x, -238, 238), z: clamp(z, -238, 238) };
   }
 
-  // ---- Update ----
-
+  // --- update per frame ---
+  // input: instance Input (down()/forward/...) atau objek polos
+  // {up,down,left,right,shift,space}. ctx: {heat, audio, onHitPed, rivals}.
   update(dt, input, ctx = {}) {
-    if (dt <= 0) return;
     const p = this.player;
-    if (p.inCar) {
-      this._updateDriving(dt, input, ctx);
+    const key = (...codes) => {
+      if (input && typeof input.down === 'function') return input.down(...codes);
+      return false;
+    };
+    const fwd = input && typeof input.forward === 'number'
+      ? input.forward
+      : ((key('KeyW', 'ArrowUp') || input?.up ? 1 : 0) - (key('KeyS', 'ArrowDown') || input?.down ? 1 : 0));
+    const steerIn = input && typeof input.strafe === 'number'
+      ? input.strafe
+      : ((key('KeyD', 'ArrowRight') || input?.right ? 1 : 0) - (key('KeyA', 'ArrowLeft') || input?.left ? 1 : 0));
+    const running = input ? (typeof input.run === 'boolean' ? input.run : key('ShiftLeft', 'ShiftRight')) : false;
+    const handbrake = input ? (typeof input.handbrake === 'boolean' ? input.handbrake : key('Space') || !!input?.space) : false;
+
+    if (p.inCar && this.playerCar) {
+      this._updateDriving(dt, fwd, steerIn, handbrake, ctx);
     } else {
-      this._updateOnFoot(dt, input, ctx);
+      this._updateOnFoot(dt, fwd, steerIn, running, ctx);
     }
-    this._updateTraffic(dt, ctx);
+
+    this._updateTraffic(dt);
     this._updatePeds(dt, ctx);
     this._updatePolice(dt, ctx);
-    this._updateHeli(dt);
+    return this;
   }
 
-  _updateOnFoot(dt, input, ctx) {
+  _updateOnFoot(dt, fwd, strafe, running, ctx) {
     const p = this.player;
-    let mx = 0;
-    let mz = 0;
-    if (input.up) mz -= 1;
-    if (input.down) mz += 1;
-    if (input.left) mx -= 1;
-    if (input.right) mx += 1;
-    const len = Math.hypot(mx, mz);
-    if (len > 0) {
-      // Gerak relatif kamera chase: maju = -z layar ~ heading pemain.
-      // Sederhanakan: W = maju searah heading, A/D = strafe/putar.
-      const speed = input.run ? CONFIG.footRunSpeed : CONFIG.footSpeed;
-      // Arah gerak absolut: W maju searah heading, S mundur, A/D belok.
-      let moveHeading = p.heading;
-      if (input.up && !input.down) moveHeading = p.heading;
-      else if (input.down && !input.up) moveHeading = p.heading + Math.PI;
-      if (input.left) moveHeading -= Math.PI / 2.4;
-      if (input.right) moveHeading += Math.PI / 2.4;
-      if (input.up && input.left) moveHeading = p.heading - Math.PI / 4;
-      if (input.up && input.right) moveHeading = p.heading + Math.PI / 4;
-      if (input.down && input.left) moveHeading = p.heading - Math.PI * 0.75;
-      if (input.down && input.right) moveHeading = p.heading + Math.PI * 0.75;
-      p.heading = angleLerp(p.heading, moveHeading, Math.min(1, dt * 12));
-      const f = forward(p.heading);
-      p.x += f.x * speed * dt;
-      p.z += f.z * speed * dt;
-      p.speed = speed;
-    } else {
-      p.speed = 0;
+    const speed = running ? 9.5 : 6.5;
+    // Gerak relatif heading pemain: W maju, S mundur, A/D putar (arcade).
+    if (fwd !== 0 || strafe !== 0) {
+      if (strafe !== 0) p.heading += strafe * 2.6 * dt * (fwd < 0 ? -1 : 1);
+      const fx = Math.sin(p.heading);
+      const fz = Math.cos(p.heading);
+      const nx = p.x + fx * fwd * speed * dt;
+      const nz = p.z + fz * fwd * speed * dt;
+      if (!this._collidesBuilding(nx, p.z, 0.6)) p.x = nx;
+      if (!this._collidesBuilding(p.x, nz, 0.6)) p.z = nz;
+      const c = this._clampWorld(p.x, p.z);
+      p.x = c.x; p.z = c.z;
     }
-    this._collideBuildings(p, 0.6);
-    // Roadblock menghalangi pejalan kaki.
-    for (const rb of this.roadblocks) {
-      if (this._circleHit(p.x, p.z, 0.6, rb.x, rb.z, 1.6)) {
-        const dx = p.x - rb.x;
-        const dz = p.z - rb.z;
-        const d = Math.hypot(dx, dz) || 1;
-        p.x = rb.x + (dx / d) * 2.2;
-        p.z = rb.z + (dz / d) * 2.2;
-      }
-    }
-    const c = this.world.clampToWorld(p.x, p.z);
-    p.x = c.x;
-    p.z = c.z;
   }
 
-  _updateDriving(dt, input, ctx) {
+  _updateDriving(dt, fwd, steerIn, handbrake, ctx) {
     const car = this.playerCar;
-    const p = this.player;
-    const engineBonus = (car.engineLevel || 0);
-    const maxSpeed = CONFIG.carMaxSpeed
-      + engineBonus * 6 - (100 - (car.condition ?? 100)) * 0.06;
-    const accel = CONFIG.carAccel + engineBonus * 4;
-    if (input.up) car.speed += accel * dt;
-    if (input.down) {
-      if (car.speed > 0.5) car.speed -= CONFIG.carBrake * dt;
-      else car.speed -= CONFIG.carReverseAccel * dt;
+    const params = CAR_PARAMS[car.model] || CAR_PARAMS.sedan;
+    const maxSpeed = params.maxSpeed + (car.engineBonus || 0);
+    const accel = params.accel + (car.accelBonus || 0);
+    if (fwd > 0) car.speed += accel * dt;
+    else if (fwd < 0) car.speed -= (car.speed > 0.5 ? 34 : 12) * dt;
+    else car.speed -= car.speed * 0.35 * dt * 3;
+    if (handbrake) car.speed *= Math.pow(0.92, dt * 60);
+    car.speed = clamp(car.speed, -12, maxSpeed);
+    if (Math.abs(car.speed) > 0.1) {
+      car.heading += steerIn * params.steer * dt * (car.speed >= 0 ? 1 : -1) * Math.min(1, Math.abs(car.speed) / 10);
     }
-    // Drag + rolling.
-    car.speed -= car.speed * CONFIG.carDrag * dt;
-    if (!input.up && !input.down) car.speed -= car.speed * 0.6 * dt;
-    if (input.handbrake) {
-      car.speed *= Math.max(0, 1 - 2.2 * dt);
-    }
-    car.speed = clamp(car.speed, -CONFIG.carMaxReverse, Math.max(8, maxSpeed));
-    if (Math.abs(car.speed) < 0.05 && !input.up && !input.down) car.speed = 0;
-
-    const steerInput = (input.left ? -1 : 0) + (input.right ? 1 : 0);
-    const steerFactor = clamp(Math.abs(car.speed) / 12, 0, 1);
-    const steer = steerInput * CONFIG.carSteer
-      * (input.handbrake ? 1.7 : 1) * steerFactor
-      * (car.speed >= 0 ? 1 : -1);
-    car.heading += steer * dt;
-
-    const f = forward(car.heading);
-    const nx = car.x + f.x * car.speed * dt;
-    const nz = car.z + f.z * car.speed * dt;
-    const before = { x: car.x, z: car.z };
-    car.x = nx;
-    car.z = nz;
-    if (this._collideBuildings(car, CONFIG.carRadius)) {
-      // Tabrakan gedung: pantul pelan + rusak.
-      const impact = Math.abs(car.speed);
-      car.speed *= -0.25;
-      if (impact > 8) {
-        this.damageCar(car, Math.min(12, impact * 0.5));
-        if (ctx.onCrash) ctx.onCrash(impact);
+    const nx = car.x + Math.sin(car.heading) * car.speed * dt;
+    const nz = car.z + Math.cos(car.heading) * car.speed * dt;
+    const hitBuilding = this._collidesBuilding(nx, nz, params.radius);
+    if (hitBuilding) {
+      if (Math.abs(car.speed) > 8) {
+        this.damageCar(car, Math.abs(car.speed) * 0.6);
+        if (ctx.audio && ctx.audio.crash) { try { ctx.audio.crash(); } catch (e) {} }
+        if (ctx.onCrash) ctx.onCrash(car);
       }
+      car.speed *= -0.3;
+    } else {
+      car.x = nx;
+      car.z = nz;
     }
-    // Tabrakan roadblock: hancur, mobil melambat + rusak.
-    for (let i = this.roadblocks.length - 1; i >= 0; i--) {
-      const rb = this.roadblocks[i];
-      if (this._circleHit(car.x, car.z, CONFIG.carRadius, rb.x, rb.z, 1.6)) {
-        this.roadblocks.splice(i, 1);
-        car.speed *= 0.35;
-        this.damageCar(car, 6);
-        if (ctx.onCrash) ctx.onCrash(Math.abs(car.speed) + 10);
-        if (ctx.onRoadblockHit) ctx.onRoadblockHit(rb);
-      }
-    }
-    // Tabrakan traffic: dorong traffic, mobil pemain melambat.
+    const c = this._clampWorld(car.x, car.z);
+    car.x = c.x; car.z = c.z;
+    // Tabrakan dengan traffic / roadblock (lingkaran).
     for (const t of this.traffic) {
-      if (this._circleHit(car.x, car.z, CONFIG.carRadius, t.x, t.z, CONFIG.carRadius)) {
-        const dx = t.x - car.x;
-        const dz = t.z - car.z;
-        const d = Math.hypot(dx, dz) || 1;
-        t.x = car.x + (dx / d) * (CONFIG.carRadius * 2 + 0.2);
-        t.z = car.z + (dz / d) * (CONFIG.carRadius * 2 + 0.2);
+      const d = dist2d(car.x, car.z, t.x, t.z);
+      if (d < params.radius + 2.2 && d > 0.001) {
+        const push = (params.radius + 2.2 - d);
+        const ux = (t.x - car.x) / d;
+        const uz = (t.z - car.z) / d;
+        t.x += ux * push; t.z += uz * push;
+        if (Math.abs(car.speed) > 6) {
+          this.damageCar(car, Math.abs(car.speed) * 0.4);
+          if (ctx.audio && ctx.audio.crash) { try { ctx.audio.crash(); } catch (e) {} }
+        }
         car.speed *= 0.6;
-        this.damageCar(car, 2);
-        if (ctx.onCrash) ctx.onCrash(6);
       }
     }
-    // Tabrakan pejalan kaki: ped terpental, heat naik (via ctx).
+    for (const rb of this.roadblocks) {
+      const d = dist2d(car.x, car.z, rb.x, rb.z);
+      if (d < params.radius + 2.5 && Math.abs(car.speed) > 4) {
+        rb.hp = (rb.hp || 30) - Math.abs(car.speed);
+        this.damageCar(car, 5);
+        car.speed *= 0.4;
+      }
+    }
+    this.roadblocks = this.roadblocks.filter((rb) => (rb.hp == null || rb.hp > 0));
+    // Tabrakan pejalan kaki.
     for (const ped of this.peds) {
-      if (this._circleHit(car.x, car.z, CONFIG.carRadius, ped.x, ped.z, CONFIG.pedRadius)) {
-        const dx = ped.x - car.x;
-        const dz = ped.z - car.z;
-        const d = Math.hypot(dx, dz) || 1;
-        ped.x = car.x + (dx / d) * 4;
-        ped.z = car.z + (dz / d) * 4;
+      const d = dist2d(car.x, car.z, ped.x, ped.z);
+      if (d < params.radius + 0.6 && Math.abs(car.speed) > 3) {
         ped.fleeing = true;
-        car.speed *= 0.85;
-        if (ctx.onPedHit) ctx.onPedHit(ped);
+        ped.x += (ped.x - car.x) / (d || 1) * 3;
+        ped.z += (ped.z - car.z) / (d || 1) * 3;
+        if (ctx.heat && typeof ctx.heat.add === 'function') ctx.heat.add(18);
+        if (ctx.onHitPed) ctx.onHitPed(ped);
       }
     }
-    // Polisi menabrak mobil pemain (ram) ditangani di _updatePolice.
-    const c = this.world.clampToWorld(car.x, car.z);
-    car.x = c.x;
-    car.z = c.z;
-    p.x = car.x;
-    p.z = car.z;
-    p.heading = car.heading;
-    p.speed = car.speed;
-    void before;
+    // Sinkron pemain dengan mobil.
+    this.player.x = car.x;
+    this.player.z = car.z;
+    this.player.heading = car.heading;
   }
 
-  _updateTraffic(dt, ctx) {
-    const p = this.player;
+  _updateTraffic(dt) {
     for (const t of this.traffic) {
-      // Pelan bila mobil pemain tepat di depan.
-      let targetSpeed = t.speed;
-      const dx = p.x - t.x;
-      const dz = p.z - t.z;
-      const d = Math.hypot(dx, dz);
-      if (d < 12 && p.inCar) {
-        const f = forward(t.heading);
-        const dot = dx * f.x + dz * f.z;
-        if (dot > 0) targetSpeed = t.speed * 0.35;
+      const fx = Math.sin(t.heading);
+      const fz = Math.cos(t.heading);
+      t.x += fx * t.speed * dt;
+      t.z += fz * t.speed * dt;
+      // Putar balik di ujung dunia / belok di persimpangan kadang-kadang.
+      if (t.x < -235 || t.x > 235 || t.z < -235 || t.z > 235) {
+        t.heading += Math.PI;
+        t.x = clamp(t.x, -235, 235);
+        t.z = clamp(t.z, -235, 235);
       }
-      const sp = targetSpeed;
-      if (t.axis === 'z') {
-        t.z += t.dir * sp * dt;
-        if (t.z > 238) t.z = -238;
-        if (t.z < -238) t.z = 238;
-      } else {
-        t.x += t.dir * sp * dt;
-        if (t.x > 238) t.x = -238;
-        if (t.x < -238) t.x = 238;
-      }
-      // Jaga jalur (lane) — kembali ke jalur bila terdorong.
-      if (t.axis === 'z') t.x += (t.road + t.lane - t.x) * Math.min(1, dt * 2);
-      else t.z += (t.road + t.lane - t.z) * Math.min(1, dt * 2);
     }
-    void ctx;
   }
 
   _updatePeds(dt, ctx) {
-    const p = this.player;
     for (const ped of this.peds) {
-      const dPlayer = dist2d(ped.x, ped.z, p.x, p.z);
-      if (dPlayer < 8 && (p.inCar ? Math.abs(p.speed) > 4 : true)) {
-        ped.fleeing = true;
-      }
+      const speed = ped.fleeing ? 5 : ped.speed;
       if (ped.fleeing) {
-        // Lari menjauhi pemain.
-        const dx = ped.x - p.x;
-        const dz = ped.z - p.z;
+        const dx = ped.x - this.player.x;
+        const dz = ped.z - this.player.z;
         const d = Math.hypot(dx, dz) || 1;
-        const sp = 5.5;
-        ped.heading = Math.atan2(dx / d, dz / d);
-        ped.x += (dx / d) * sp * dt;
-        ped.z += (dz / d) * sp * dt;
-        if (dPlayer > 30) ped.fleeing = false;
+        ped.heading = Math.atan2(dx, dz);
+        ped.x += (dx / d) * speed * dt;
+        ped.z += (dz / d) * speed * dt;
+        if (d > 30) ped.fleeing = false;
       } else {
-        ped.wait -= dt;
-        if (ped.wait <= 0) {
-          const t = randomSidewalkPoint(this.rng);
-          // Jalan di trotoar blok yang sama / dekat: batasi jarak target.
-          const dx = t.x - ped.x;
-          const dz = t.z - ped.z;
-          if (Math.hypot(dx, dz) > 90) {
-            ped.tx = ped.x + (this.rng() - 0.5) * 30;
-            ped.tz = ped.z + (this.rng() - 0.5) * 30;
-          } else {
-            ped.tx = t.x;
-            ped.tz = t.z;
-          }
-          ped.wait = 2 + this.rng() * 4;
-        }
-        const dx = ped.tx - ped.x;
-        const dz = ped.tz - ped.z;
-        const d = Math.hypot(dx, dz);
-        if (d > 0.5) {
-          ped.heading = angleLerp(ped.heading, Math.atan2(dx / d, dz / d), Math.min(1, dt * 6));
-          ped.x += (dx / d) * ped.speed * dt;
-          ped.z += (dz / d) * ped.speed * dt;
+        ped.x += Math.sin(ped.heading) * speed * dt;
+        ped.z += Math.cos(ped.heading) * speed * dt;
+        if (ped.x < -235 || ped.x > 235 || ped.z < -235 || ped.z > 235) {
+          ped.heading += Math.PI;
         }
       }
-      this._collideBuildings(ped, CONFIG.pedRadius);
-      const c = this.world.clampToWorld(ped.x, ped.z);
-      ped.x = c.x;
-      ped.z = c.z;
+      const c = this._clampWorld(ped.x, ped.z);
+      ped.x = c.x; ped.z = c.z;
     }
-    void ctx;
   }
 
   _updatePolice(dt, ctx) {
@@ -543,91 +413,52 @@ export class Entities {
       const dx = p.x - cop.x;
       const dz = p.z - cop.z;
       const d = Math.hypot(dx, dz) || 1;
-      const wantHeading = Math.atan2(dx / d, dz / d);
-      cop.heading = angleLerp(cop.heading, wantHeading, Math.min(1, dt * 2.2));
-      const targetSpeed = p.inCar
-        ? Math.min(38, Math.abs(p.speed) + 6)
-        : 12;
-      cop.speed += (targetSpeed - cop.speed) * Math.min(1, dt * 1.5);
-      const f = forward(cop.heading);
-      cop.x += f.x * cop.speed * dt;
-      cop.z += f.z * cop.speed * dt;
-      this._collideBuildings(cop, CONFIG.carRadius);
-      const c = this.world.clampToWorld(cop.x, cop.z);
-      cop.x = c.x;
-      cop.z = c.z;
-      // Ram: menabrak pemain.
-      if (d < 3.6) {
-        if (p.inCar) {
-          this.playerCar.speed *= 0.7;
-          this.damageCar(this.playerCar, 3);
-          if (ctx.onCrash) ctx.onCrash(8);
-        } else if (Math.abs(p.speed) < 1.5) {
-          // Pemain jalan kaki, diam, polisi menempel -> busted (main.js).
-          if (ctx.onBusted) ctx.onBusted(cop);
-        } else {
-          this.damagePlayer(8 * dt * 4);
-        }
-      }
-    }
-  }
-
-  _updateHeli(dt) {
-    if (!this.heli.visible) return;
-    const p = this.player;
-    const k = Math.min(1, dt * 0.8);
-    this.heli.x += (p.x - this.heli.x) * k;
-    this.heli.z += (p.z - this.heli.z) * k;
-    this.heli.alt = 18 + Math.sin(Date.now() / 900) * 2;
-  }
-
-  // ---- Sinkronisasi render ----
-
-  toSyncList() {
-    const list = [];
-    const p = this.player;
-    if (!p.inCar) {
-      list.push({
-        kind: 'player', x: p.x, z: p.z, heading: p.heading,
-        color: PLAYER_COLORS.player, model: 'player',
-      });
-    }
-    list.push({
-      kind: 'car', x: this.playerCar.x, z: this.playerCar.z,
-      heading: this.playerCar.heading, color: this.playerCar.color,
-      model: this.playerCar.model || 'sedan', speed: this.playerCar.speed,
-    });
-    for (const t of this.traffic) {
-      list.push({
-        kind: 'traffic', x: t.x, z: t.z, heading: t.heading,
-        color: t.color, model: t.model, speed: t.speed,
-      });
-    }
-    for (const ped of this.peds) {
-      list.push({
-        kind: 'ped', x: ped.x, z: ped.z, heading: ped.heading,
-        color: ped.color, model: 'ped',
-      });
-    }
-    for (const cop of this.police) {
-      list.push({
-        kind: 'police', x: cop.x, z: cop.z, heading: cop.heading,
-        color: cop.color, model: 'cruiser', speed: cop.speed,
-      });
+      cop.heading = Math.atan2(dx, dz);
+      const targetSpeed = d > 8 ? 30 : 12;
+      cop.speed += (targetSpeed - cop.speed) * Math.min(1, dt * 2);
+      cop.x += Math.sin(cop.heading) * cop.speed * dt;
+      cop.z += Math.cos(cop.heading) * cop.speed * dt;
+      // Busted: polisi sangat dekat + pemain (jalan kaki) diam / lambat.
+      if (d < 3 && !p.inCar && ctx.onBusted) ctx.onBusted(cop);
     }
     if (this.heli.visible) {
+      this.heli.x += (p.x - this.heli.x) * Math.min(1, dt * 1.5);
+      this.heli.z += (p.z - this.heli.z) * Math.min(1, dt * 1.5);
+    }
+  }
+
+  // Daftar untuk renderer: { kind, x, z, heading, color, model, alt? }.
+  toSyncList() {
+    const list = [];
+    list.push({
+      kind: 'player', x: this.player.x, z: this.player.z, heading: this.player.heading,
+      color: '#ff2d78', model: this.player.inCar ? this.playerCar.model : 'onfoot',
+      alt: this.player.hp,
+    });
+    if (this.playerCar) {
       list.push({
-        kind: 'heli', x: this.heli.x, z: this.heli.z,
-        heading: this.player.heading, color: '#334155',
-        model: 'heli', alt: this.heli.alt,
+        kind: 'playerCar', x: this.playerCar.x, z: this.playerCar.z,
+        heading: this.playerCar.heading, color: this.playerCar.color,
+        model: this.playerCar.model, alt: this.playerCar.condition,
       });
     }
+    for (const t of this.traffic) {
+      list.push({ kind: 'traffic', x: t.x, z: t.z, heading: t.heading, color: t.color, model: t.model, alt: t.speed });
+    }
+    for (const ped of this.peds) {
+      list.push({ kind: 'ped', x: ped.x, z: ped.z, heading: ped.heading, color: ped.color, model: 'ped', alt: ped.height });
+    }
+    for (const c of this.police) {
+      list.push({ kind: 'police', x: c.x, z: c.z, heading: c.heading, color: c.color, model: 'sedan', alt: c.speed });
+    }
+    if (this.heli.visible) {
+      list.push({ kind: 'heli', x: this.heli.x, z: this.heli.z, heading: 0, color: '#94a3b8', model: 'heli', alt: this.heli.alt });
+    }
     for (const rb of this.roadblocks) {
-      list.push({
-        kind: 'roadblock', x: rb.x, z: rb.z, heading: rb.heading,
-        color: rb.color, model: rb.model,
-      });
+      list.push({ kind: 'roadblock', x: rb.x, z: rb.z, heading: rb.heading, color: rb.color, model: 'roadblock', alt: rb.hp });
     }
     return list;
   }
 }
+
+export default Entities;

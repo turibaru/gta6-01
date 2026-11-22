@@ -1,175 +1,140 @@
-// NEON BAY: SUNSET RUN — weapons.js
-// Senjata pemain: pistol / scatter / smg / fists. Ammo dari WEAPON_DEFS.
-// shoot() = raycast kerucut ke target terdekat dalam range; scatter 6 pellet;
-// fists = melee range 2.4. Menembak menaikkan heat (+10) — dipicu lewat
-// ctx.onShoot dari main.js.
-// Ditulis fresh di sesi terekam ronde 6, dari design spec §3 dan §5.
+// weapons.js — Senjata — GTA 6 R7
+// Spec §3 + §5 + §17.3. pistol/scatter/smg/fists + RIFLE (key 5, ammo 40,
+// dmg 60, rate 0.6, range 140, spread 0.004). shoot(): raycast kerucut ke
+// target terdekat dalam range; scatter 6 pellet; melee range 2.4.
+// Menembak (F/klik) naikkan heat +10 — KECUALI tembakan yang mengenai mobil
+// RIVAL di misi 9 (tidak menambah heat, §17.7b).
 
-import { CONFIG, WEAPON_DEFS, WEAPON_ORDER, clamp, dist2d } from './config.js';
+export const WEAPON_DEFS = {
+  pistol: { key: 1, ammo: 120, dmg: 34, rate: 0.28, range: 90, spread: 0.012, color: '#ffd166' },
+  scatter: { key: 2, ammo: 24, dmg: 22, rate: 0.85, range: 38, spread: 0.09, pellets: 6, color: '#ff7b54' },
+  smg: { key: 3, ammo: 120, dmg: 16, rate: 0.09, range: 70, spread: 0.035, auto: true, color: '#7ee8fa' },
+  fists: { key: 4, ammo: Infinity, dmg: 25, rate: 0.45, range: 2.4, melee: true, color: '#e2e8f0' },
+  rifle: { key: 5, ammo: 40, dmg: 60, rate: 0.6, range: 140, spread: 0.004, color: '#facc15' },
+};
+export const WEAPON_ORDER = ['pistol', 'scatter', 'smg', 'fists', 'rifle'];
+export const WEAPON_NAMES = {
+  pistol: 'Pistol', scatter: 'Scattergun', smg: 'SMG', fists: 'Fists', rifle: 'Rifle',
+};
 
-const TAU = Math.PI * 2;
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
-function normAngle(a) {
-  while (a > Math.PI) a -= TAU;
-  while (a <= -Math.PI) a += TAU;
-  return a;
-}
-
-// Target: { x, z, radius?, hp?, alive?, onHit?(dmg, weapon) }.
-// getTargets() dipanggil tiap shoot bila argumen targets tidak diberikan.
 export class Weapons {
   constructor(deps = {}) {
-    this.entities = deps.entities || null;
-    this.getTargets = deps.getTargets || null;
-    this.onShoot = deps.onShoot || null; // dipanggil tiap tembakan berhasil
+    this.deps = deps; // { heat, audio, getOrigin, getTargets }
+    this.current = 'pistol';
     this.ammo = {};
-    this.currentName = 'pistol';
-    this.lastShotAt = 0;
+    this._lastShot = 0;
     this.refillAll();
-  }
-
-  get current() {
-    return this.currentName;
-  }
-
-  get currentDef() {
-    return WEAPON_DEFS[this.currentName];
-  }
-
-  get currentAmmo() {
-    const def = this.currentDef;
-    if (!def) return 0;
-    if (def.ammo === Infinity) return Infinity;
-    return this.ammo[this.currentName] ?? 0;
-  }
-
-  select(name) {
-    if (!WEAPON_DEFS[name]) return false;
-    this.currentName = name;
-    return true;
-  }
-
-  selectByIndex(i) {
-    const name = WEAPON_ORDER[i];
-    if (!name) return false;
-    return this.select(name);
   }
 
   refillAll() {
     for (const name of WEAPON_ORDER) {
-      const def = WEAPON_DEFS[name];
-      this.ammo[name] = def.ammo;
+      this.ammo[name] = WEAPON_DEFS[name].ammo;
     }
+    return this.ammo;
   }
 
-  refill(name) {
-    if (!WEAPON_DEFS[name]) return false;
-    this.ammo[name] = WEAPON_DEFS[name].ammo;
+  select(name) {
+    if (WEAPON_DEFS[name]) this.current = name;
+    return this.current;
+  }
+
+  selectByKey(key) {
+    for (const name of WEAPON_ORDER) {
+      if (WEAPON_DEFS[name].key === key) return this.select(name);
+    }
+    return this.current;
+  }
+
+  get def() { return WEAPON_DEFS[this.current]; }
+
+  get displayName() { return WEAPON_NAMES[this.current] || this.current; }
+
+  ammoLeft(name = this.current) {
+    const a = this.ammo[name];
+    return a === Infinity ? '∞' : a;
+  }
+
+  canShoot(now = performance.now() / 1000) {
+    const def = this.def;
+    if (now - this._lastShot < def.rate) return false;
+    if (this.ammo[this.current] !== Infinity && this.ammo[this.current] <= 0) return false;
     return true;
   }
 
-  _playerPos() {
-    if (this.entities && this.entities.player) {
-      const p = this.entities.player;
-      return { x: p.x, z: p.z, heading: p.heading };
-    }
-    return { x: 0, z: 0, heading: 0 };
-  }
+  // Target: { x, z, hp?, condition?, kind?, isRivalCar?, alive? }.
+  // opts: { origin {x,z,heading}, targets [], now, noHeat }.
+  // Bila opts kosong, pakai deps.getOrigin()/deps.getTargets() bila ada.
+  shoot(opts = {}) {
+    const now = opts.now != null ? opts.now : performance.now() / 1000;
+    if (!this.canShoot(now)) return { ok: false, reason: 'rate' };
+    const def = this.def;
+    const origin = opts.origin || (this.deps.getOrigin ? this.deps.getOrigin() : null);
+    if (!origin) return { ok: false, reason: 'no-origin' };
+    const targets = opts.targets || (this.deps.getTargets ? this.deps.getTargets() : []) || [];
 
-  _targets(targets) {
-    if (targets) return targets;
-    if (this.getTargets) return this.getTargets() || [];
-    return [];
-  }
+    this._lastShot = now;
+    if (this.ammo[this.current] !== Infinity) this.ammo[this.current]--;
 
-  // Cari target dalam kerucut: jarak <= range dan selisih sudut <= cone.
-  _coneHit(from, heading, range, cone, list) {
-    let best = null;
-    let bestD = Infinity;
-    for (const t of list) {
-      if (t.alive === false) continue;
-      if (t.hp !== undefined && t.hp <= 0) continue;
-      const d = dist2d(from.x, from.z, t.x, t.z);
-      if (d > range + (t.radius || 0.6)) continue;
-      const ang = Math.atan2(t.x - from.x, t.z - from.z);
-      const diff = Math.abs(normAngle(ang - heading));
-      if (diff > cone) continue;
-      if (d < bestD) { best = t; bestD = d; }
-    }
-    return best ? { target: best, dist: bestD } : null;
-  }
-
-  // Tembak sekali. Kembalikan { ok, hit?, target?, damage?, pelletsHit?,
-  // remainingAmmo?, name?, reason? }.
-  shoot(targets) {
-    const def = this.currentDef;
-    if (!def) return { ok: false, reason: 'no-weapon' };
-    const now = (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000;
-    if (now - this.lastShotAt < def.rate) {
-      return { ok: false, reason: 'cooldown' };
-    }
-    if (def.ammo !== Infinity && (this.ammo[this.currentName] ?? 0) <= 0) {
-      return { ok: false, reason: 'empty', name: this.currentName };
-    }
-    this.lastShotAt = now;
-    if (def.ammo !== Infinity) this.ammo[this.currentName] -= 1;
-
-    const from = this._playerPos();
-    const list = this._targets(targets);
-    const isMelee = !!def.melee;
-    const range = isMelee ? CONFIG.meleeRange : (def.range || CONFIG.weaponRange);
-    const baseCone = isMelee ? Math.PI / 2 : 0.07;
-
+    const fx = Math.sin(origin.heading || 0);
+    const fz = Math.cos(origin.heading || 0);
+    const pellets = def.pellets || 1;
+    let hit = null;
     let totalDamage = 0;
-    let pelletsHit = 0;
-    let hitTarget = null;
 
-    if (def.pellets && def.pellets > 1) {
-      // Scatter: 6 pellet, tiap pellet sebar acak dalam spread.
-      for (let i = 0; i < def.pellets; i++) {
-        const jitter = (Math.random() - 0.5) * 2 * (def.spread || 0.09) * 6;
-        const h = from.heading + jitter;
-        const hit = this._coneHit(from, h, range, baseCone + (def.spread || 0.09), list);
-        if (hit) {
-          pelletsHit += 1;
-          totalDamage += def.dmg;
-          hitTarget = hit.target;
-          if (typeof hit.target.onHit === 'function') hit.target.onHit(def.dmg, this.currentName);
-          else if (hit.target.hp !== undefined) hit.target.hp -= def.dmg;
-        }
+    for (let p = 0; p < pellets; p++) {
+      // Raycast kerucut: target dalam range + sudut dalam spread*~3 + radius.
+      let best = null;
+      let bestDist = Infinity;
+      for (const t of targets) {
+        if (!t || t.alive === false) continue;
+        if (t.hp != null && t.hp <= 0) continue;
+        if (t.condition != null && t.condition <= 0) continue;
+        const dx = t.x - origin.x;
+        const dz = t.z - origin.z;
+        const dist = Math.hypot(dx, dz);
+        if (dist > def.range) continue;
+        if (dist < 0.001) { best = t; bestDist = 0; break; }
+        const dot = (dx * fx + dz * fz) / dist; // cos sudut ke target
+        const radius = t.radius != null ? t.radius : 1.2;
+        // Sudut yang diizinkan membesar dengan spread & radius target.
+        const cosAllowed = Math.cos(def.spread * 3 + Math.atan2(radius, dist));
+        if (dot < cosAllowed) continue;
+        if (dist < bestDist) { best = t; bestDist = dist; }
       }
-    } else {
-      const jitter = (Math.random() - 0.5) * 2 * (def.spread || 0.012);
-      const hit = this._coneHit(from, from.heading + jitter, range, baseCone, list);
-      if (hit) {
-        pelletsHit = 1;
-        totalDamage = def.dmg;
-        hitTarget = hit.target;
-        if (typeof hit.target.onHit === 'function') hit.target.onHit(def.dmg, this.currentName);
-        else if (hit.target.hp !== undefined) hit.target.hp -= def.dmg;
+      if (best) {
+        hit = best;
+        totalDamage += def.dmg;
+        if (best.hp != null) best.hp = Math.max(0, best.hp - def.dmg);
+        if (best.condition != null) best.condition = Math.max(0, best.condition - def.dmg);
+        if (best.alive !== undefined && best.hp != null && best.hp <= 0) best.alive = false;
       }
     }
 
-    if (this.onShoot) this.onShoot(this.currentName, pelletsHit > 0);
+    // Heat +10, KECUALI tembakan mengenai mobil rival misi 9 (§17.7b).
+    const hitRivalCar = !!(hit && (hit.isRivalCar || hit.kind === 'getaway' || hit.kind === 'rival-car'));
+    if (!opts.noHeat && !hitRivalCar && this.deps.heat && typeof this.deps.heat.add === 'function') {
+      this.deps.heat.add(10);
+    }
+    if (this.deps.audio && typeof this.deps.audio.shoot === 'function') {
+      try { this.deps.audio.shoot(); } catch (e) { /* abaikan */ }
+    }
     return {
       ok: true,
-      hit: pelletsHit > 0,
-      target: hitTarget,
+      weapon: this.current,
+      hit: hit || null,
+      hitRivalCar,
       damage: totalDamage,
-      pelletsHit,
-      remainingAmmo: this.currentAmmo,
-      name: this.currentName,
-      from: { x: from.x, z: from.z, heading: from.heading },
+      pellets,
+      ammoLeft: this.ammo[this.current],
     };
   }
 
-  // Boleh menembak sekarang? (cooldown + ammo)
-  canShoot() {
-    const def = this.currentDef;
-    if (!def) return false;
-    const now = (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000;
-    if (now - this.lastShotAt < def.rate) return false;
-    if (def.ammo !== Infinity && (this.ammo[this.currentName] ?? 0) <= 0) return false;
-    return true;
+  // Alias: tembak dari posisi pemain dengan heading tertentu.
+  shootFrom(x, z, heading, targets, opts = {}) {
+    return this.shoot({ ...opts, origin: { x, z, heading }, targets });
   }
 }
+
+export default Weapons;
