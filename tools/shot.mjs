@@ -2,7 +2,7 @@
 // Headless Chromium over CDP memakai WebSocket bawaan Node 22, TANPA
 // puppeteer/playwright. Prasyarat: serve.ts jalan (default di :8080).
 //
-//   node tools/shot.mjs cover street garage mission   # 4 screenshot JPEG
+//   node tools/shot.mjs cover street avenue mission   # 4 screenshot JPEG
 //   node tools/shot.mjs --playtest                  # 15 langkah playtest
 //
 // Keluar 1 bila ada exception / console error di halaman.
@@ -17,10 +17,10 @@ export const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 export const SHOT_FILES = {
   cover: 'screenshots/1-cover.jpg',
   street: 'screenshots/2-street.jpg',
-  garage: 'screenshots/3-garage.jpg',
+  avenue: 'screenshots/3-avenue.jpg',
   mission: 'screenshots/4-mission.jpg',
 };
-export const SHOT_ORDER = ['cover', 'street', 'garage', 'mission'];
+export const SHOT_ORDER = ['cover', 'street', 'avenue', 'mission'];
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -467,7 +467,7 @@ async function main() {
     }
     const names = args.filter((a) => !a.startsWith('-'));
     if (names.length === 0) {
-      console.error('Penggunaan: node tools/shot.mjs cover street garage mission | node tools/shot.mjs --playtest');
+      console.error('Penggunaan: node tools/shot.mjs cover street avenue mission | node tools/shot.mjs --playtest');
       process.exitCode = 2;
       return;
     }

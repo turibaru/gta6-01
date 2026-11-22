@@ -1,6 +1,6 @@
 // shots.js — Screenshot preset — NEON BAY: SUNSET RUN (ronde 8, legibility)
 // Spec §9 + §17.5, restage R8 atas diagnosis koordinator (22 Nov ~13:45 WIB):
-// SHOT_PRESETS = ['cover','street','garage','mission'] — tiap shot membuktikan
+// SHOT_PRESETS = ['cover','street','avenue','mission'] — tiap shot membuktikan
 // kriteria BERBEDA; cover PALING PENTING: LEBIH SEDIKIT, LEBIH BESAR, LEBIH
 // TERBACA (tidak ada entity < ~40px di frame 1280). Tiap preset MENEMPATKAN
 // SECARA DETERMINISTIK traffic + peds di dalam frustum kamera (10-70 m di
@@ -10,11 +10,16 @@
 // ini DOWNTOWN CANYON: jalan x=-156 di antara menara Downtown 26-60 m,
 // gedung tinggi + billboard + jendela pita menyala, pejalan kaki di kedua
 // trotoar. Ke-4 shot HARUS beda adegan: (1) Strip chase, (2) Downtown,
-// (3) garasi, (4) pier.
-// R8 §2.3: presetGarage — panel ramping 350 px di kiri-atas, kendaraan
-// diparkir di SISI KANAN frame supaya terlihat jelas di samping panel.
+// (3) arcade avenue, (4) pier.
+// R8-revisi shot 3 (22 Nov ~14:05 WIB): 'garage' DIGANTI 'avenue' — panel
+// garasi terbaca sebagai layar menu, bukan dunia. Shot 3 baru: WIDE STREET
+// di distrik ARCADE (jalan x=0, z~190, menghadap utara): pemain cruise
+// tenang di mobil TANPA wanted (verb beda dari cover yang kejar-kejaran),
+// 4 traffic + 5 peds besar di trotoar, label minimap ARCADE (ke-4 label
+// distrik berbeda: STRIP / DOWNTOWN / ARCADE / BEACH). Panel garasi HARUS
+// TERTUTUP di preset ini (applyBasis sudah closePanel; jangan pernah buka).
 
-export const SHOT_PRESETS = ['cover', 'street', 'garage', 'mission'];
+export const SHOT_PRESETS = ['cover', 'street', 'avenue', 'mission'];
 
 export function shotFromUrl() {
   try {
@@ -228,41 +233,35 @@ function presetStreet(game) {
   game.dialog.hide();
 }
 
-function presetGarage(game) {
-  // GARAGE (progresi): pemain di garage (-52,104), panel garasi TERBUKA.
-  // R8 §2.3: panel RAMPING 350 px di kiri-atas; kendaraan diparkir di
-  // SISI KANAN frame (lat +4..+7) supaya terlihat jelas di samping panel,
-  // bukan tertutup menu. Mobil kru pink di tengah + bike cyan + 2 sedan.
-  const px = -52; const pz = 104; const heading = Math.PI; // utara, jalan x=-52
-  setPlayerOnFoot(game, px, pz, heading, 100);
-  // Basis garage: 9/10 job selesai, respect 1240 — HUD "MISI 9/10".
-  game.state.jobsDone = 9;
-  game.missions.completed = 9;
-  game.respect.points = 1240;
-  // Mobil pemain pink parkir di depan garage.
-  const car = game.entities.playerCar;
-  car.x = -52; car.z = 92;
-  car.heading = heading;
-  car.speed = 0;
-  car.condition = 100;
-  car.color = '#ff2d78';
-  car.model = 'sedan';
-  // BIKE cyan + 2 mobil parkir berderet di SISI KANAN (lat +), jauh dari panel kiri.
+function presetAvenue(game) {
+  // AVENUE (revisi R8 shot 3, ganti garasi): WIDE STREET di distrik ARCADE.
+  // Pemain CRUISE TENANG di mobil (tanpa wanted — verb beda dari cover yang
+  // kejar-kejaran) menyusuri jalan x=0 ke utara (z 190 -> 140), di antara
+  // gedung arcade rendah (7-16 m) ber-neon + awning di kedua sisi, marka
+  // jalan + trotoar terang terbaca. 4 traffic + 5 peds BESAR di trotoar.
+  // Label minimap: ARCADE (pemain z=190 >= 130) — ke-4 shot kini 4 label
+  // distrik berbeda (STRIP / DOWNTOWN / ARCADE / BEACH). Panel garasi
+  // TERTUTUP (applyBasis closePanel) — frame ini murni dunia, bukan menu.
+  const px = 0; const pz = 190; const heading = Math.PI; // utara, jalan x=0
+  setPlayerCar(game, px, pz, heading, 12, 100, '#ff2d78', 'sedan');
+  // Basis avenue: 5/10 job selesai, respect 800 — HUD "MISI 5/10".
+  game.state.jobsDone = 5;
+  game.missions.completed = 5;
+  game.respect.points = 800;
+  // 4 traffic di jalan arcade: 2 searah + 1 sport cyan BERLAWANAN ARAH
+  // (lampu depan menghadap kamera, sangat terbaca) + 1 truck lime jauh.
   placeSpots(game, 'traffic', px, pz, heading, [
-    { fwd: 14, lat: 5, speed: 0, model: 'bike', color: '#22d3ee' },
-    { fwd: 20, lat: 7, speed: 0, color: '#38bdf8', model: 'sedan' },
-    { fwd: 26, lat: 4, speed: 0, color: '#a3e635', model: 'sedan' },
+    { fwd: 14, lat: -2, heading: Math.PI, speed: 10 },
+    { fwd: 26, lat: 2, heading: 0, speed: 10, color: '#22d3ee', model: 'sport' },
+    { fwd: 38, lat: -2, heading: Math.PI, speed: 10, color: '#f59e0b', model: 'sedan' },
+    { fwd: 50, lat: 2, heading: Math.PI, speed: 8, color: '#a3e635', model: 'truck' },
   ]);
-  // 0 peds (parkir semua jauh) — frame fokus ke panel + deret kendaraan.
-  placeSpots(game, 'peds', px, pz, heading, []);
-  // Panel garasi TERBUKA (#garage-panel terlihat: 4 pilihan + stats).
-  if (game.garage && typeof game.garage.openPanel === 'function') game.garage.openPanel();
-  // Staging shot R8: panel ramping 350 px di kiri-atas (bukan tengah 420 px)
-  // supaya deret kendaraan di kanan + jalan + gedung terlihat.
-  if (typeof document !== 'undefined') {
-    const panel = document.getElementById('garage-panel');
-    if (panel) { panel.style.width = '350px'; panel.style.left = '14px'; panel.style.top = '110px'; panel.style.transform = 'none'; }
-  }
+  // 5 peds BESAR di kedua trotoar arcade (lat ±7-8 = trotoar x=±7.5).
+  placeSpots(game, 'peds', px, pz, heading, [
+    { fwd: 9, lat: 7 }, { fwd: 12, lat: -7 },
+    { fwd: 16, lat: 7.5 }, { fwd: 20, lat: -7.5 },
+    { fwd: 25, lat: 7 },
+  ]);
   game.dialog.hide();
 }
 
@@ -326,7 +325,7 @@ export function applyShotPreset(name, game) {
   applyBasis(game);
   if (name === 'cover') presetCover(game);
   else if (name === 'street') presetStreet(game);
-  else if (name === 'garage') presetGarage(game);
+  else if (name === 'avenue') presetAvenue(game);
   else if (name === 'mission') presetMission(game);
   game.frozen = true;
   game.shotMode = name;

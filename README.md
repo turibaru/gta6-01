@@ -48,7 +48,7 @@ node serve.ts
 
 ```sh
 node serve.ts            # terminal 1 — server di :8080
-node tools/shot.mjs cover street garage mission   # 4 screenshot 1280x720 ke screenshots/
+node tools/shot.mjs cover street avenue mission   # 4 screenshot 1280x720 ke screenshots/
 node tools/shot.mjs --playtest                  # 15 langkah playtest
 node tools/smoke.mjs                            # 18 checks, keluar 0 bila semua PASS
 ```
@@ -80,5 +80,5 @@ tools/
   shot.mjs         # driver screenshot + playtest via headless Chromium (CDP)
   smoke.mjs        # harness 18 checks
 screenshots/
-  1-cover.jpg  2-street.jpg  3-garage.jpg  4-mission.jpg
+  1-cover.jpg  2-street.jpg  3-avenue.jpg  4-mission.jpg
 ```
