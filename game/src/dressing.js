@@ -1,102 +1,231 @@
-// dressing.js — Detail kota kecil di trotoar — GTA 6 R7
-// Spec §5 + §17.4/§17.7c. dressWorld(scene, worldData): lampu jalan, rambu,
-// tempat sampah, bangku, detail kota kecil di trotoar (JANGAN di tengah
-// jalan). WAJIB reuse geometry + material yang sama (jangan buat geometry
-// baru per prop); semua deterministik dari seed 20261121.
+// dressing.js — Kelas Dressing (dekorasi kota)
+// Lampu neon, awning toko ARCADE, palm BEACH, billboard, tiang lampu,
+// tong sampah, hydrant. Semua posisi deterministik via mulberry32(seed).
+import { CONFIG, mulberry32 } from './config.js';
 
-export const ROAD_POS = [-208, -156, -104, -52, 0, 52, 104, 156, 208];
+const NEON_COLORS = [0xff2e88, 0x00e5ff, 0xffb300, 0x7c4dff, 0x00ff9d];
 
-function mulberry32(seed) {
-  let a = seed >>> 0;
-  return function () {
-    a |= 0; a = (a + 0x6D2B79F5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
+export class Dressing {
+  constructor(game) {
+    this.game = game;
+    this.group = null;
+    this.signs = [];
+    this.awningList = [];
+    this.seed = (CONFIG && CONFIG.WORLD_SEED) || 1337;
+  }
 
-export function dressWorld(scene, worldData, THREE) {
-  const T = THREE || (typeof globalThis !== 'undefined' ? globalThis.THREE : null);
-  if (!scene || !T) return { count: 0 };
-  const rng = mulberry32(20261121);
+  _scene() {
+    try {
+      if (this.game && this.game.world && this.game.world.scene) return this.game.world.scene;
+    } catch (e) {
+      return null;
+    }
+    return null;
+  }
 
-  // --- geometry + material DIBAGI (reuse, §17.7c) ---
-  const poleGeo = new T.BoxGeometry(0.18, 5.2, 0.18);
-  const lampHeadGeo = new T.BoxGeometry(0.9, 0.18, 0.3);
-  const lampBulbGeo = new T.SphereGeometry(0.22, 8, 6);
-  const signPoleGeo = new T.BoxGeometry(0.12, 2.6, 0.12);
-  const signGeo = new T.BoxGeometry(0.9, 0.9, 0.06);
-  const binGeo = new T.CylinderGeometry(0.4, 0.35, 0.9, 10);
-  const benchSeatGeo = new T.BoxGeometry(1.8, 0.12, 0.55);
-  const benchLegGeo = new T.BoxGeometry(0.12, 0.45, 0.5);
-  const planterGeo = new T.BoxGeometry(1.1, 0.5, 1.1);
-  const bushGeo = new T.SphereGeometry(0.55, 8, 6);
+  _ensureGroup() {
+    try {
+      if (typeof THREE === 'undefined') return null;
+      const scene = this._scene();
+      if (!scene) return null;
+      if (!this.group) {
+        this.group = new THREE.Group();
+        this.group.name = 'dressing';
+        scene.add(this.group);
+      }
+      return this.group;
+    } catch (e) {
+      return null;
+    }
+  }
 
-  const poleMat = new T.MeshLambertMaterial({ color: 0x334155 });
-  const bulbMat = new T.MeshLambertMaterial({ color: 0xffe9a8, emissive: 0xffd27a, emissiveIntensity: 0.9 });
-  const signMat = new T.MeshLambertMaterial({ color: 0xdc2626 });
-  const signMat2 = new T.MeshLambertMaterial({ color: 0x2563eb });
-  const binMat = new T.MeshLambertMaterial({ color: 0x475569 });
-  const benchMat = new T.MeshLambertMaterial({ color: 0x92400e });
-  const planterMat = new T.MeshLambertMaterial({ color: 0x57534e });
-  const bushMat = new T.MeshLambertMaterial({ color: 0x166534 });
-
-  const add = (mesh, x, y, z) => {
+  _box(w, h, d, color, x, y, z, emissive) {
+    const geo = new THREE.BoxGeometry(w, h, d);
+    const mat = new THREE.MeshStandardMaterial({
+      color: color,
+      emissive: emissive || 0x000000,
+      emissiveIntensity: emissive ? 1 : 0,
+      roughness: 0.7,
+      metalness: 0.1
+    });
+    const mesh = new THREE.Mesh(geo, mat);
     mesh.position.set(x, y, z);
-    scene.add(mesh);
     return mesh;
-  };
+  }
 
-  let count = 0;
-  // Lampu jalan + rambu di tiap persimpangan utama (jalan x jalan),
-  // 8-9 m dari sumbu jalan = di trotoar, bukan di tengah jalan.
-  for (const rx of ROAD_POS) {
-    for (const rz of ROAD_POS) {
-      if (Math.abs(rx) > 208 || Math.abs(rz) > 208) continue;
-      // Lampu jalan di 2 sudut persimpangan (deterministik: hanya bila rng < 0.5).
-      if (rng() < 0.55) {
-        const sx = rx + 8.5;
-        const sz = rz + 8.5;
-        add(new T.Mesh(poleGeo, poleMat), sx, 2.6, sz);
-        add(new T.Mesh(lampHeadGeo, poleMat), sx - 0.3, 5.2, sz);
-        add(new T.Mesh(lampBulbGeo, bulbMat), sx - 0.7, 5.1, sz);
-        count += 3;
+  // Dekorasi sesuai distrik: panggil sekali per distrik saat world dibangun.
+  dress(district) {
+    try {
+      const group = this._ensureGroup();
+      if (!group) return;
+      const d = (district || '').toUpperCase();
+      if (d === 'ARCADE') {
+        this.neonSigns();
+        this.awnings();
+        this.streetLamps(-60, 60, -20, 20, 6);
+      } else if (d === 'BEACH') {
+        this.palms();
+        this.streetLamps(-40, 40, 60, 100, 4);
+        this.billboard(0, 14, 80, 'BEACH PIER', 0x00e5ff);
+      } else if (d === 'STRIP') {
+        this.neonSigns();
+        this.billboard(-30, 16, -40, 'NEON BAY', 0xff2e88);
+        this.streetLamps(-80, 80, -60, -20, 8);
+      } else if (d === 'DOWNTOWN') {
+        this.streetLamps(-30, 30, -80, -40, 6);
+        this.billboard(20, 18, -60, 'DOWNTOWN', 0xffb300);
       }
-      // Rambu di sudut berlawanan.
-      if (rng() < 0.5) {
-        const sx = rx - 8.5;
-        const sz = rz - 8.5;
-        add(new T.Mesh(signPoleGeo, poleMat), sx, 1.3, sz);
-        add(new T.Mesh(signGeo, rng() < 0.5 ? signMat : signMat2), sx, 2.7, sz);
-        count += 2;
-      }
+      this.streetProps();
+    } catch (e) {
+      // diam
     }
   }
-  // Tempat sampah + bangku + planter di sepanjang trotoar jalan utama.
-  for (const road of ROAD_POS) {
-    for (let along = -200; along <= 200; along += 52) {
-      const off = 8.2;
-      if (rng() < 0.4) {
-        add(new T.Mesh(binGeo, binMat), road + off, 0.45, along);
-        count++;
+
+  // Papan neon ARCADE / STRIP: kotak emissive warna-warni di fasad toko.
+  neonSigns() {
+    try {
+      const group = this._ensureGroup();
+      if (!group) return;
+      const rand = mulberry32(this.seed + 101);
+      const labels = ['ARCADE', 'NEON', 'PIZZA', 'HOTEL', 'CASINO', 'TACOS', 'BAR', 'DISCO'];
+      for (let i = 0; i < 8; i++) {
+        const color = NEON_COLORS[Math.floor(rand() * NEON_COLORS.length)];
+        const w = 6 + rand() * 6;
+        const sign = this._box(w, 1.6, 0.4, color, -70 + i * 18, 8 + rand() * 4, -18, color);
+        sign.name = 'neon-' + (labels[i] || 'NEON');
+        group.add(sign);
+        this.signs.push(sign);
+        // Batang penyangga neon.
+        const pole = this._box(0.3, 2, 0.3, 0x222222, -70 + i * 18, 6.5, -18);
+        group.add(pole);
       }
-      if (rng() < 0.3) {
-        const bx = road - off;
-        const bz = along + 10;
-        add(new T.Mesh(benchSeatGeo, benchMat), bx, 0.5, bz);
-        add(new T.Mesh(benchLegGeo, benchMat), bx - 0.7, 0.22, bz);
-        add(new T.Mesh(benchLegGeo, benchMat), bx + 0.7, 0.22, bz);
-        count += 3;
-      }
-      if (rng() < 0.3) {
-        add(new T.Mesh(planterGeo, planterMat), road + off, 0.25, along + 26);
-        add(new T.Mesh(bushGeo, bushMat), road + off, 0.75, along + 26);
-        count += 2;
-      }
+    } catch (e) {
+      // diam
     }
   }
-  return { count };
+
+  // Awning (kanopi toko) ARCADE: kotak miring warna-warni di depan toko.
+  awnings() {
+    try {
+      const group = this._ensureGroup();
+      if (!group) return;
+      const rand = mulberry32(this.seed + 202);
+      const awningColors = [0xff2e88, 0x00e5ff, 0xffb300, 0xff5252, 0x7c4dff];
+      for (let i = 0; i < 6; i++) {
+        const color = awningColors[i % awningColors.length];
+        const awn = this._box(7, 0.35, 3.2, color, -60 + i * 20, 4.6, -14.5);
+        awn.rotation.x = 0.35;
+        awn.name = 'awning-' + i;
+        group.add(awn);
+        this.awningList.push(awn);
+        // Penyangga miring awning.
+        const strut = this._box(0.25, 2.4, 0.25, 0x333333, -62 + i * 20, 3.4, -13.2);
+        strut.rotation.x = 0.5;
+        group.add(strut);
+      }
+    } catch (e) {
+      // diam
+    }
+  }
+
+  // Palm BEACH: batang + daun (kerucut pipih) deterministik.
+  palms() {
+    try {
+      const group = this._ensureGroup();
+      if (!group) return;
+      const rand = mulberry32(this.seed + 303);
+      for (let i = 0; i < 10; i++) {
+        const x = -70 + rand() * 140;
+        const z = 62 + rand() * 30;
+        const trunk = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.35, 0.5, 7, 8),
+          new THREE.MeshStandardMaterial({ color: 0x6d4c41, roughness: 0.9 })
+        );
+        trunk.position.set(x, 3.5, z);
+        trunk.rotation.z = (rand() - 0.5) * 0.2;
+        group.add(trunk);
+        const crown = new THREE.Mesh(
+          new THREE.ConeGeometry(3.2, 2.2, 8),
+          new THREE.MeshStandardMaterial({ color: 0x2e7d32, roughness: 0.8 })
+        );
+        crown.position.set(x, 7.6, z);
+        group.add(crown);
+      }
+    } catch (e) {
+      // diam
+    }
+  }
+
+  // Billboard besar dengan teks warna neon (kotak emissive).
+  billboard(x, y, z, label, color) {
+    try {
+      const group = this._ensureGroup();
+      if (!group) return null;
+      const board = this._box(16, 5, 0.6, 0x111111, x, y, z, color || 0xff2e88);
+      board.name = 'billboard-' + (label || 'BILLBOARD');
+      group.add(board);
+      const legL = this._box(0.6, y - 2.5, 0.6, 0x333333, x - 6, (y - 2.5) / 2, z);
+      const legR = this._box(0.6, y - 2.5, 0.6, 0x333333, x + 6, (y - 2.5) / 2, z);
+      group.add(legL);
+      group.add(legR);
+      return board;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // Tiang lampu jalan sepanjang rentang yang diberikan.
+  streetLamps(x0, x1, z0, z1, count) {
+    try {
+      const group = this._ensureGroup();
+      if (!group) return;
+      const n = count || 4;
+      for (let i = 0; i < n; i++) {
+        const t = n === 1 ? 0 : i / (n - 1);
+        const x = x0 + (x1 - x0) * t;
+        const z = z0 + (z1 - z0) * t;
+        const pole = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.18, 0.22, 6, 8),
+          new THREE.MeshStandardMaterial({ color: 0x37474f, roughness: 0.6, metalness: 0.5 })
+        );
+        pole.position.set(x, 3, z);
+        group.add(pole);
+        const lamp = new THREE.Mesh(
+          new THREE.SphereGeometry(0.55, 12, 8),
+          new THREE.MeshBasicMaterial({ color: 0xffe082 })
+        );
+        lamp.position.set(x, 6.2, z);
+        group.add(lamp);
+        const arm = this._box(2.2, 0.15, 0.15, 0x37474f, x + 1, 6, z);
+        group.add(arm);
+      }
+    } catch (e) {
+      // diam
+    }
+  }
+
+  // Properti jalan kecil: tong sampah + hydrant, tersebar deterministik.
+  streetProps() {
+    try {
+      const group = this._ensureGroup();
+      if (!group) return;
+      const rand = mulberry32(this.seed + 404);
+      for (let i = 0; i < 6; i++) {
+        const x = -70 + rand() * 140;
+        const z = -40 + rand() * 80;
+        // Tong sampah.
+        const bin = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.5, 0.45, 1.1, 10),
+          new THREE.MeshStandardMaterial({ color: 0x455a64, roughness: 0.8 })
+        );
+        bin.position.set(x, 0.55, z);
+        group.add(bin);
+        // Hydrant merah di dekatnya.
+        const hyd = this._box(0.5, 0.9, 0.5, 0xd32f2f, x + 1.6, 0.45, z + 0.4);
+        group.add(hyd);
+      }
+    } catch (e) {
+      // diam
+    }
+  }
 }
-
-export default dressWorld;

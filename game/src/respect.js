@@ -1,56 +1,41 @@
-// respect.js — Respect / peringkat kru — GTA 6 R7
-// Spec §3 + §5. RESPECT_RANKS: Rookie 0, Hustler 150, Wheelman 400,
-// Kingpin 800, Neon Legend 1500.
+// respect.js — Respect: skor 0-100 + level ROOKIE / STREET / NEON KING.
+// Compose dari r10-design-spec.md bagian 11. Deterministik, tanpa acak.
 
-export const RESPECT_RANKS = [
-  { name: 'Rookie', min: 0 },
-  { name: 'Hustler', min: 150 },
-  { name: 'Wheelman', min: 400 },
-  { name: 'Kingpin', min: 800 },
-  { name: 'Neon Legend', min: 1500 },
+export const RESPECT_MAX = 100;
+export const RESPECT_LEVELS = [
+  { min: 0, label: "ROOKIE" },
+  { min: 30, label: "STREET" },
+  { min: 70, label: "NEON KING" },
 ];
 
-export function rankFor(points) {
-  let rank = RESPECT_RANKS[0].name;
-  for (const r of RESPECT_RANKS) {
-    if (points >= r.min) rank = r.name;
-  }
-  return rank;
-}
-
 export class Respect {
-  constructor(points = 0) {
-    this.points = points;
+  constructor(game) {
+    this.game = game || null;
+    this.score = 0;
   }
 
-  get rank() {
-    return rankFor(this.points);
-  }
-
-  get rankName() {
-    return this.rank;
-  }
-
-  // add(n) -> { rankedUp, rank, prevRank, points }
+  // Naik saat misi selesai / aksi keren (spec bagian 11).
   add(n) {
-    const prevRank = this.rank;
-    this.points = Math.max(0, this.points + (n || 0));
-    const rank = this.rank;
-    return { rankedUp: rank !== prevRank, rank, prevRank, points: this.points };
+    this.score = Math.max(0, Math.min(RESPECT_MAX, this.score + (n || 0)));
+    this.updateHud();
+    return this.score;
   }
 
-  set(points) {
-    this.points = Math.max(0, points || 0);
-    return this.points;
-  }
-
-  // Poin menuju rank berikutnya (null bila sudah Neon Legend).
-  nextRank() {
-    for (const r of RESPECT_RANKS) {
-      if (this.points < r.min) return { name: r.name, min: r.min, remaining: r.min - this.points };
+  level() {
+    let label = RESPECT_LEVELS[0].label;
+    for (const lv of RESPECT_LEVELS) {
+      if (this.score >= lv.min) label = lv.label;
     }
-    return null;
+    return label;
+  }
+
+  value() {
+    return this.score;
+  }
+
+  updateHud() {
+    if (typeof document === "undefined") return;
+    const el = document.getElementById("hud-respect");
+    if (el) el.textContent = "RESPECT " + this.score + " — " + this.level();
   }
 }
-
-export default Respect;

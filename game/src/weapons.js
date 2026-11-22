@@ -1,140 +1,118 @@
-// weapons.js — Senjata — GTA 6 R7
-// Spec §3 + §5 + §17.3. pistol/scatter/smg/fists + RIFLE (key 5, ammo 40,
-// dmg 60, rate 0.6, range 140, spread 0.004). shoot(): raycast kerucut ke
-// target terdekat dalam range; scatter 6 pellet; melee range 2.4.
-// Menembak (F/klik) naikkan heat +10 — KECUALI tembakan yang mengenai mobil
-// RIVAL di misi 9 (tidak menambah heat, §17.7b).
+// weapons.js — Weapons: rifle + pistol, dipakai di misi pier shootout.
+// Compose dari r10-design-spec.md bagian 11. Deterministik, tanpa acak.
 
-export const WEAPON_DEFS = {
-  pistol: { key: 1, ammo: 120, dmg: 34, rate: 0.28, range: 90, spread: 0.012, color: '#ffd166' },
-  scatter: { key: 2, ammo: 24, dmg: 22, rate: 0.85, range: 38, spread: 0.09, pellets: 6, color: '#ff7b54' },
-  smg: { key: 3, ammo: 120, dmg: 16, rate: 0.09, range: 70, spread: 0.035, auto: true, color: '#7ee8fa' },
-  fists: { key: 4, ammo: Infinity, dmg: 25, rate: 0.45, range: 2.4, melee: true, color: '#e2e8f0' },
-  rifle: { key: 5, ammo: 40, dmg: 60, rate: 0.6, range: 140, spread: 0.004, color: '#facc15' },
-};
-export const WEAPON_ORDER = ['pistol', 'scatter', 'smg', 'fists', 'rifle'];
-export const WEAPON_NAMES = {
-  pistol: 'Pistol', scatter: 'Scattergun', smg: 'SMG', fists: 'Fists', rifle: 'Rifle',
+const WEAPON_DEFS = {
+  rifle: { name: "rifle", label: "RIFLE", magSize: 30, damage: 34, range: 120, auto: true },
+  pistol: { name: "pistol", label: "PISTOL", magSize: 12, damage: 20, range: 60, auto: false },
 };
 
-function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
-
-export class Weapons {
-  constructor(deps = {}) {
-    this.deps = deps; // { heat, audio, getOrigin, getTargets }
-    this.current = 'pistol';
-    this.ammo = {};
-    this._lastShot = 0;
-    this.refillAll();
-  }
-
-  refillAll() {
-    for (const name of WEAPON_ORDER) {
-      this.ammo[name] = WEAPON_DEFS[name].ammo;
-    }
-    return this.ammo;
-  }
-
-  select(name) {
-    if (WEAPON_DEFS[name]) this.current = name;
-    return this.current;
-  }
-
-  selectByKey(key) {
-    for (const name of WEAPON_ORDER) {
-      if (WEAPON_DEFS[name].key === key) return this.select(name);
-    }
-    return this.current;
-  }
-
-  get def() { return WEAPON_DEFS[this.current]; }
-
-  get displayName() { return WEAPON_NAMES[this.current] || this.current; }
-
-  ammoLeft(name = this.current) {
-    const a = this.ammo[name];
-    return a === Infinity ? '∞' : a;
-  }
-
-  canShoot(now = performance.now() / 1000) {
-    const def = this.def;
-    if (now - this._lastShot < def.rate) return false;
-    if (this.ammo[this.current] !== Infinity && this.ammo[this.current] <= 0) return false;
-    return true;
-  }
-
-  // Target: { x, z, hp?, condition?, kind?, isRivalCar?, alive? }.
-  // opts: { origin {x,z,heading}, targets [], now, noHeat }.
-  // Bila opts kosong, pakai deps.getOrigin()/deps.getTargets() bila ada.
-  shoot(opts = {}) {
-    const now = opts.now != null ? opts.now : performance.now() / 1000;
-    if (!this.canShoot(now)) return { ok: false, reason: 'rate' };
-    const def = this.def;
-    const origin = opts.origin || (this.deps.getOrigin ? this.deps.getOrigin() : null);
-    if (!origin) return { ok: false, reason: 'no-origin' };
-    const targets = opts.targets || (this.deps.getTargets ? this.deps.getTargets() : []) || [];
-
-    this._lastShot = now;
-    if (this.ammo[this.current] !== Infinity) this.ammo[this.current]--;
-
-    const fx = Math.sin(origin.heading || 0);
-    const fz = Math.cos(origin.heading || 0);
-    const pellets = def.pellets || 1;
-    let hit = null;
-    let totalDamage = 0;
-
-    for (let p = 0; p < pellets; p++) {
-      // Raycast kerucut: target dalam range + sudut dalam spread*~3 + radius.
-      let best = null;
-      let bestDist = Infinity;
-      for (const t of targets) {
-        if (!t || t.alive === false) continue;
-        if (t.hp != null && t.hp <= 0) continue;
-        if (t.condition != null && t.condition <= 0) continue;
-        const dx = t.x - origin.x;
-        const dz = t.z - origin.z;
-        const dist = Math.hypot(dx, dz);
-        if (dist > def.range) continue;
-        if (dist < 0.001) { best = t; bestDist = 0; break; }
-        const dot = (dx * fx + dz * fz) / dist; // cos sudut ke target
-        const radius = t.radius != null ? t.radius : 1.2;
-        // Sudut yang diizinkan membesar dengan spread & radius target.
-        const cosAllowed = Math.cos(def.spread * 3 + Math.atan2(radius, dist));
-        if (dot < cosAllowed) continue;
-        if (dist < bestDist) { best = t; bestDist = dist; }
-      }
-      if (best) {
-        hit = best;
-        totalDamage += def.dmg;
-        if (best.hp != null) best.hp = Math.max(0, best.hp - def.dmg);
-        if (best.condition != null) best.condition = Math.max(0, best.condition - def.dmg);
-        if (best.alive !== undefined && best.hp != null && best.hp <= 0) best.alive = false;
-      }
-    }
-
-    // Heat +10, KECUALI tembakan mengenai mobil rival misi 9 (§17.7b).
-    const hitRivalCar = !!(hit && (hit.isRivalCar || hit.kind === 'getaway' || hit.kind === 'rival-car'));
-    if (!opts.noHeat && !hitRivalCar && this.deps.heat && typeof this.deps.heat.add === 'function') {
-      this.deps.heat.add(10);
-    }
-    if (this.deps.audio && typeof this.deps.audio.shoot === 'function') {
-      try { this.deps.audio.shoot(); } catch (e) { /* abaikan */ }
-    }
-    return {
-      ok: true,
-      weapon: this.current,
-      hit: hit || null,
-      hitRivalCar,
-      damage: totalDamage,
-      pellets,
-      ammoLeft: this.ammo[this.current],
-    };
-  }
-
-  // Alias: tembak dari posisi pemain dengan heading tertentu.
-  shootFrom(x, z, heading, targets, opts = {}) {
-    return this.shoot({ ...opts, origin: { x, z, heading }, targets });
-  }
+function three() {
+  return typeof globalThis !== "undefined" ? globalThis.THREE || null : null;
 }
 
-export default Weapons;
+export class Weapons {
+  constructor(game) {
+    this.game = game || null;
+    this.current = "rifle";
+    this.ammoLeft = WEAPON_DEFS.rifle.magSize;
+    this.reserve = 120;
+    this.mesh = null;
+    this.buildMesh();
+  }
+
+  equip(name) {
+    const def = WEAPON_DEFS[name];
+    if (!def) return this.current;
+    this.current = def.name;
+    this.ammoLeft = def.magSize;
+    this.buildMesh();
+    return this.current;
+  }
+
+  ammo() {
+    return this.ammoLeft;
+  }
+
+  reload() {
+    const def = WEAPON_DEFS[this.current];
+    const need = def.magSize - this.ammoLeft;
+    if (need <= 0 || this.reserve <= 0) return this.ammoLeft;
+    const taken = Math.min(need, this.reserve);
+    this.ammoLeft += taken;
+    this.reserve -= taken;
+    return this.ammoLeft;
+  }
+
+  // Tembak ke arah bidik (raycast sederhana ke rival terdekat di garis bidik).
+  fire() {
+    if (this.ammoLeft <= 0) {
+      this.reload();
+      if (this.ammoLeft <= 0) return null;
+    }
+    this.ammoLeft -= 1;
+    const g = this.game;
+    if (g && g.audio && typeof g.audio.shot === "function") {
+      try { g.audio.shot(); } catch (e) { /* headless: abaikan */ }
+    }
+    // Raycast sederhana: rival hidup paling dekat di depan pemain.
+    let hitRival = null;
+    if (g && g.rivals && typeof g.rivals.alive === "function" && g.rivals.alive() > 0) {
+      const p = g.playerPos || { x: 0, z: 0 };
+      const rivals = g.rivals.list ? g.rivals.list() : [];
+      let best = Infinity;
+      for (const r of rivals) {
+        if (!r || r.down) continue;
+        const d = Math.hypot((r.x || 0) - p.x, (r.z || 0) - p.z);
+        if (d < best && d <= WEAPON_DEFS[this.current].range) {
+          best = d;
+          hitRival = r;
+        }
+      }
+      if (hitRival && typeof g.rivals.hit === "function") g.rivals.hit(hitRival);
+    }
+    return hitRival;
+  }
+
+  // Model rifle: silinder panjang + popor (spec bagian 11).
+  buildMesh() {
+    const THREE = three();
+    if (!THREE) { this.mesh = null; return null; }
+    const group = new THREE.Group();
+    const gunMat = new THREE.MeshStandardMaterial({ color: 0x222226, roughness: 0.35, metalness: 0.7 });
+    const woodMat = new THREE.MeshStandardMaterial({ color: 0x6b4423, roughness: 0.7, metalness: 0.1 });
+    if (this.current === "rifle") {
+      // Laras: silinder panjang.
+      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.9, 10), gunMat);
+      barrel.rotation.x = Math.PI / 2;
+      barrel.position.set(0, 0, 0.55);
+      group.add(barrel);
+      // Badan senapan.
+      const body = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.12, 0.55), gunMat);
+      body.position.set(0, 0, 0.05);
+      group.add(body);
+      // Popor kayu.
+      const stock = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.16, 0.35), woodMat);
+      stock.position.set(0, -0.02, -0.35);
+      group.add(stock);
+      // Magasin.
+      const mag = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.18, 0.1), gunMat);
+      mag.position.set(0, -0.13, 0.1);
+      group.add(mag);
+      // Bidik.
+      const sight = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.08, 0.06), gunMat);
+      sight.position.set(0, 0.1, 0.25);
+      group.add(sight);
+    } else {
+      // Pistol: badan pendek + gagang.
+      const slide = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.07, 0.32), gunMat);
+      slide.position.set(0, 0, 0.08);
+      group.add(slide);
+      const grip = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.16, 0.09), woodMat);
+      grip.position.set(0, -0.1, -0.06);
+      grip.rotation.x = 0.25;
+      group.add(grip);
+    }
+    this.mesh = group;
+    return group;
+  }
+}

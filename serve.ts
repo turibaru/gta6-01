@@ -1,56 +1,94 @@
-// serve.ts — server file statis untuk game NEON BAY: SUNSET RUN.
-// Node 22 stdlib saja. Root = game/ di sebelah file ini.
-// PORT env (default 8080), listen 127.0.0.1.
-import { createReadStream, existsSync, statSync } from 'node:fs';
-import { createServer } from 'node:http';
-import { dirname, extname, join, normalize, resolve, sep } from 'node:path';
+// serve.ts — Server HTTP statis untuk "NEON BAY: SUNSET RUN" (gta6-01, ronde 10).
+// Node tanpa dependensi eksternal. Jalankan via: node serve.ts
+// Menyajikan direktori repo di port 8080 dengan content-type yang benar.
+
+import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), 'game');
-const PORT = Number(process.env.PORT ?? 8080);
-const HOST = '127.0.0.1';
+const PORT: number = 8080;
+const ROOT: string = path.dirname(fileURLToPath(import.meta.url));
 
-const MIME: Record<string, string> = {
+const CONTENT_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
   '.mjs': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.png': 'image/png',
+  '.json': 'application/json; charset=utf-8',
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
-  '.json': 'application/json; charset=utf-8',
-  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.webp': 'image/webp',
+  '.css': 'text/css; charset=utf-8',
+  '.ts': 'text/plain; charset=utf-8',
+  '.txt': 'text/plain; charset=utf-8',
   '.ico': 'image/x-icon',
 };
 
-const server = createServer((req, res) => {
-  try {
-    // Query string diabaikan saat mencari file.
-    const rawPath = decodeURIComponent((req.url ?? '/').split('?')[0].split('#')[0]);
-    const relPath = rawPath === '/' ? 'index.html' : rawPath.replace(/^\/+/, '');
-    const resolved = resolve(join(ROOT, normalize(relPath)));
-    // Path traversal keluar dari game/ ditolak (403).
-    if (resolved !== ROOT && !resolved.startsWith(ROOT + sep)) {
-      res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-      res.end('403 Forbidden\n');
-      return;
-    }
-    const target = statSync(resolved, { throwIfNoEntry: false })?.isDirectory()
-      ? join(resolved, 'index.html')
-      : resolved;
-    if (!existsSync(target) || !statSync(target).isFile()) {
+function contentType(filePath: string): string {
+  const ext = path.extname(filePath).toLowerCase();
+  return CONTENT_TYPES[ext] || 'application/octet-stream';
+}
+
+function sendFile(res: http.ServerResponse, filePath: string): void {
+  fs.readFile(filePath, (err, data) => {
+    if (err) {
       res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
       res.end('404 Not Found\n');
       return;
     }
-    res.writeHead(200, { 'content-type': MIME[extname(target).toLowerCase()] ?? 'application/octet-stream' });
-    createReadStream(target).pipe(res);
-  } catch {
-    res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' });
-    res.end('500 Internal Server Error\n');
+    res.writeHead(200, {
+      'content-type': contentType(filePath),
+      'content-length': data.length,
+      'cache-control': 'no-cache',
+    });
+    res.end(data);
+  });
+}
+
+const server = http.createServer((req, res) => {
+  try {
+    const url = new URL(req.url || '/', 'http://127.0.0.1');
+    let pathname = decodeURIComponent(url.pathname);
+    if (pathname === '/') pathname = '/game/index.html';
+    const filePath = path.normalize(path.join(ROOT, pathname));
+    if (!filePath.startsWith(ROOT)) {
+      res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+      res.end('403 Forbidden\n');
+      return;
+    }
+    fs.stat(filePath, (err, stat) => {
+      if (err || !stat.isFile()) {
+        res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
+        res.end('404 Not Found\n');
+        return;
+      }
+      if (req.method === 'HEAD') {
+        res.writeHead(200, {
+          'content-type': contentType(filePath),
+          'content-length': stat.size,
+          'cache-control': 'no-cache',
+        });
+        res.end();
+        return;
+      }
+      sendFile(res, filePath);
+    });
+  } catch (_e) {
+    res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' });
+    res.end('400 Bad Request\n');
   }
 });
 
-server.listen(PORT, HOST, () => {
-  console.log(`serve.ts: http://${HOST}:${PORT}/`);
+server.on('error', (err: NodeJS.ErrnoException) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error('serve.ts: port ' + PORT + ' sudah dipakai — matikan server lama dulu.');
+  } else {
+    console.error('serve.ts error:', err.message);
+  }
+  process.exit(1);
+});
+
+server.listen(PORT, '127.0.0.1', () => {
+  console.log('NEON BAY serve.ts jalan di http://127.0.0.1:' + PORT + '/ (root: ' + ROOT + ')');
 });

@@ -1,339 +1,245 @@
-// NEON BAY: SUNSET RUN — world.js (R7 deepen)
-// Dunia 480x480: grid jalan, 5 distrik, pantai + pier + palem, skyline.
-// Spec §2 + §17.4 (fasad kaya: setback atap, rooftop props, jendela 4 sisi,
-// awning, lampu lalu lintas, billboard). Deterministik: mulberry32(20261121).
-// Semua mesh/prop WAJIB reuse geometry + material yang sama (§17.7c).
+// NEON BAY: SUNSET RUN — world (gta6-01, round 10)
+// Kota deterministik dari seed (mulberry32): 4 distrik, jalan grid,
+// gedung dengan window strips, pier kayu di BEACH dengan 6 posisi rival.
 
-const THREE = window.THREE;
+import { CONFIG, mulberry32 } from "./config.js";
 
-export const SEED = 20261121;
-export const ROAD_POS = [-208, -156, -104, -52, 0, 52, 104, 156, 208];
-export const BLOCK_CENTERS = [-182, -130, -78, -26, 26, 78, 130, 182];
-export const WORLD_HALF = 230;
-
-export function mulberry32(seed) {
-  let a = seed >>> 0;
-  return function () {
-    a |= 0;
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-export function districtOf(bx, bz) {
-  if (bx >= 130) return 'beach';
-  if (bx <= -130) return 'downtown';
-  if (bz >= 130) return 'arcade';
-  if (bz <= -130) return 'hills';
-  return 'strip';
-}
-
-// Geometry + material bersama — dibuat sekali, dipakai semua gedung/prop.
-let GEO = null;
-let MAT = null;
-
-function sharedGeo() {
-  if (GEO) return GEO;
-  GEO = {
-    unitBox: new THREE.BoxGeometry(1, 1, 1),
-    // Strip jendela: kotak tipis (lebar 1, tinggi 1, tebal 1) — diskala per sisi.
-    winStrip: new THREE.BoxGeometry(1, 1, 1),
-    pole: new THREE.CylinderGeometry(0.09, 0.12, 1, 6),
-    lampBall: new THREE.SphereGeometry(0.22, 8, 6),
-    palmTrunk: new THREE.CylinderGeometry(0.18, 0.3, 1, 6),
-    palmCrown: new THREE.ConeGeometry(1.6, 1.8, 6),
-    pierPost: new THREE.CylinderGeometry(0.22, 0.22, 1, 6),
-    pierEnd: new THREE.CylinderGeometry(1, 1, 1, 20),
-  };
-  return GEO;
-}
-
-function sharedMat() {
-  if (MAT) return MAT;
-  const lambert = (c) => new THREE.MeshLambertMaterial({ color: c });
-  const basic = (c) => new THREE.MeshBasicMaterial({ color: c });
-  MAT = {
-    ground: lambert(0x35313d),
-    road: lambert(0x17141d),
-    sand: lambert(0xd9b380),
-    sea: new THREE.MeshLambertMaterial({ color: 0x1a6f9e, transparent: true, opacity: 0.85 }),
-    pierWood: lambert(0x8a6a42),
-    pierDark: lambert(0x6b4f30),
-    trunk: lambert(0x6b4a2a),
-    palmLeaf: lambert(0x2f7a3d),
-    skyline: lambert(0x1c1426),
-    hill: lambert(0x1e3d24),
-    roof: lambert(0x2a2430),
-    setback: lambert(0x3a3444),
-    acUnit: lambert(0x8a8f96),
-    antenna: lambert(0x555a60),
-    window: basic(0xffd27a),
-    neonPink: basic(0xff2d78),
-    neonCyan: basic(0x22d3ee),
-    neonYellow: basic(0xfacc15),
-    neonOrange: basic(0xff7b54),
-    neonGreen: basic(0xa3e635),
-    neonPurple: basic(0x8b5cf6),
-    awningRed: lambert(0xe11d48),
-    awningTeal: lambert(0x0d9488),
-    awningAmber: lambert(0xd97706),
-    trafficPole: lambert(0x3f3f46),
-    trafficHead: lambert(0x18181b),
-    lampRed: basic(0xef4444),
-    lampYellow: basic(0xfacc15),
-    lampGreen: basic(0x22c55e),
-    lampOff: basic(0x3f1d1d),
-    billboardPink: basic(0xff2d78),
-    billboardCyan: basic(0x22d3ee),
-    billboardYellow: basic(0xfacc15),
-    downtown: lambert(0x5a6b8a),
-    pastel: [0xc9a0a0, 0xa0b8c9, 0xc9b8a0, 0xa8c9a0, 0xb8a0c9, 0xd0c0a8].map(lambert),
-  };
-  return MAT;
-}
-
-function box(scene, geo, mat, x, y, z, sx, sy, sz, ry) {
-  const m = new THREE.Mesh(geo, mat);
-  m.position.set(x, y, z);
-  m.scale.set(sx, sy, sz);
-  if (ry) m.rotation.y = ry;
-  scene.add(m);
-  return m;
-}
-
-const NEON_SIGNS = ['neonPink', 'neonCyan', 'neonYellow', 'neonOrange', 'neonGreen', 'neonPurple'];
-const AWNINGS = ['awningRed', 'awningTeal', 'awningAmber'];
-const BILLBOARDS = ['billboardPink', 'billboardCyan', 'billboardYellow'];
-
-// 8 persimpangan utama untuk lampu lalu lintas (§17.4).
-export const TRAFFIC_LIGHT_SPOTS = [
-  { x: 0, z: 0 }, { x: 0, z: 104 }, { x: -104, z: 0 }, { x: 104, z: 0 },
-  { x: 0, z: -104 }, { x: -104, z: -104 }, { x: 104, z: 104 }, { x: 52, z: 52 },
-];
-
-export const World = {
-  colliders: [],
-  roads: [],
-  spawnPoints: {
-    player: { x: 0, z: 26 },
-    garage: { x: -52, z: 104 },
-    pier: { x: 225, z: 0 },
-    hideout: { x: 78, z: -78 },
-    arcade: { x: 26, z: 182 },
-    extraction: { x: 208, z: -208 },
-  },
-
-  isRoad(x, z) {
-    for (const p of ROAD_POS) {
-      if (Math.abs(x - p) <= 6 || Math.abs(z - p) <= 6) return true;
-    }
-    return false;
-  },
-
-  clampToWorld(x, z) {
-    const c = (v) => Math.max(-WORLD_HALF, Math.min(WORLD_HALF, v));
-    return { x: c(x), z: c(z) };
-  },
-
-  build(scene) {
-    const geo = sharedGeo();
-    const mat = sharedMat();
-    const rng = mulberry32(SEED);
-    this.colliders = [];
+export class World {
+  constructor(seed) {
+    this.seed = typeof seed === "number" ? seed : CONFIG.WORLD_SEED;
+    this.rng = mulberry32(this.seed);
+    // Map nama -> { center, bounds } (dipakai minimap + label).
+    this.districts = {
+      STRIP: {
+        center: { x: 0, z: -200 },
+        bounds: { minX: -200, maxX: 200, minZ: -300, maxZ: -100 },
+      },
+      DOWNTOWN: {
+        center: { x: -160, z: 50 },
+        bounds: { minX: -300, maxX: -20, minZ: -80, maxZ: 180 },
+      },
+      ARCADE: {
+        center: { x: 150, z: 50 },
+        bounds: { minX: 0, maxX: 300, minZ: -80, maxZ: 180 },
+      },
+      BEACH: {
+        center: { x: 0, z: 250 },
+        bounds: { minX: -300, maxX: 300, minZ: 180, maxZ: 320 },
+      },
+    };
     this.roads = [];
-    const trafficLights = [];
+    this.scene = typeof THREE !== "undefined" ? new THREE.Scene() : null;
+    if (this.scene) this.scene.name = "neon-bay-city";
+    // 6 posisi rival di pier (misi shootout shot 4).
+    this.pierRivalSpots = [];
+    this.pier = { x: 120, zStart: 190, zEnd: 280 };
+    this.built = false;
+  }
 
-    // --- Tanah dasar + jalan ---
-    const ground = new THREE.Mesh(new THREE.PlaneGeometry(480, 480), mat.ground);
+  // Nama distrik untuk posisi (x, z) — dipakai minimap + label.
+  districtAt(x, z) {
+    if (z >= 180) return "BEACH";
+    if (z <= -100) return "STRIP";
+    if (x < 0) return "DOWNTOWN";
+    return "ARCADE";
+  }
+
+  build() {
+    // Data jalan selalu dibangun (juga headless, tanpa THREE).
+    this.roads = this.makeRoadData();
+    this.makePierSpots();
+    if (this.scene && typeof THREE !== "undefined") {
+      this.buildGround();
+      this.buildRoadMeshes();
+      this.buildDistricts();
+      this.buildPier();
+    }
+    this.built = true;
+    return this.scene;
+  }
+
+  // Jalan grid: 5 jalan utara-selatan + 5 timur-barat.
+  makeRoadData() {
+    const roads = [];
+    const half = CONFIG.CITY_HALF;
+    const step = CONFIG.BLOCK_SIZE;
+    for (let x = -240; x <= 240; x += step) {
+      roads.push({ axis: "z", at: x, from: -half, to: half, width: CONFIG.ROAD_WIDTH });
+    }
+    for (let z = -240; z <= 240; z += step) {
+      roads.push({ axis: "x", at: z, from: -half, to: half, width: CONFIG.ROAD_WIDTH });
+    }
+    return roads;
+  }
+
+  // 6 posisi rival tersebar di sepanjang pier (semua terlihat).
+  makePierSpots() {
+    this.pierRivalSpots = [];
+    const xs = [-6, -3, 0, 3, 6, -1.5];
+    for (let i = 0; i < CONFIG.PIER_RIVAL_COUNT; i++) {
+      this.pierRivalSpots.push({
+        x: this.pier.x + xs[i % xs.length],
+        z: 205 + i * 12,
+      });
+    }
+    return this.pierRivalSpots;
+  }
+
+  buildGround() {
+    const half = CONFIG.CITY_HALF;
+    // Tanah kota.
+    const ground = new THREE.Mesh(
+      new THREE.PlaneGeometry(half * 2 + 200, half * 2 + 200),
+      new THREE.MeshStandardMaterial({ color: 0x3a3348, roughness: 0.95 })
+    );
     ground.rotation.x = -Math.PI / 2;
     ground.receiveShadow = true;
-    scene.add(ground);
-    for (const p of ROAD_POS) {
-      this.roads.push({ axis: 'x', at: p, from: -240, to: 240 });
-      this.roads.push({ axis: 'z', at: p, from: -240, to: 240 });
-      const rx = new THREE.Mesh(new THREE.PlaneGeometry(480, 12), mat.road);
-      rx.rotation.x = -Math.PI / 2;
-      rx.position.set(0, 0.02, p);
-      rx.receiveShadow = true;
-      scene.add(rx);
-      const rz = new THREE.Mesh(new THREE.PlaneGeometry(12, 480), mat.road);
-      rz.rotation.x = -Math.PI / 2;
-      rz.position.set(p, 0.02, 0);
-      rz.receiveShadow = true;
-      scene.add(rz);
-    }
-
-    // --- Pantai timur: pasir + laut ---
-    const sand = new THREE.Mesh(new THREE.PlaneGeometry(32, 480), mat.sand);
+    this.scene.add(ground);
+    // Laut di BEACH (selatan, z > 180).
+    const sea = new THREE.Mesh(
+      new THREE.PlaneGeometry(half * 2 + 200, 220),
+      new THREE.MeshStandardMaterial({
+        color: 0x1a4a6b,
+        roughness: 0.25,
+        metalness: 0.4,
+        emissive: 0x0a2038,
+      })
+    );
+    sea.rotation.x = -Math.PI / 2;
+    sea.position.set(0, -0.4, 290);
+    this.scene.add(sea);
+    // Pasir pantai.
+    const sand = new THREE.Mesh(
+      new THREE.PlaneGeometry(half * 2 + 200, 40),
+      new THREE.MeshStandardMaterial({ color: 0xc2a878, roughness: 1 })
+    );
     sand.rotation.x = -Math.PI / 2;
-    sand.position.set(224, 0.03, 0);
+    sand.position.set(0, 0.05, 200);
     sand.receiveShadow = true;
-    scene.add(sand);
-    const seaMesh = new THREE.Mesh(new THREE.PlaneGeometry(240, 480), mat.sea);
-    seaMesh.rotation.x = -Math.PI / 2;
-    seaMesh.position.set(350, 0.15, 0);
-    scene.add(seaMesh);
+    this.scene.add(sand);
+  }
 
-    // --- Pier kayu (deck x 206..272, ujung bundar x=278) ---
-    const pierDeck = box(scene, geo.unitBox, mat.pierWood, 239, 1.0, 0, 66, 0.6, 8);
-    pierDeck.receiveShadow = true;
-    const pierEnd = new THREE.Mesh(geo.pierEnd, mat.pierWood);
-    pierEnd.scale.set(5, 0.6, 5);
-    pierEnd.position.set(278, 1.0, 0);
-    scene.add(pierEnd);
-    for (let x = 210; x <= 272; x += 10) {
-      for (const dz of [-3.4, 3.4]) {
-        const post = new THREE.Mesh(geo.pierPost, mat.pierDark);
-        post.scale.set(1, 2.4, 1);
-        post.position.set(x, 0.2, dz);
-        scene.add(post);
+  buildRoadMeshes() {
+    const roadMat = new THREE.MeshStandardMaterial({ color: 0x1c1c22, roughness: 0.9 });
+    for (const road of this.roads) {
+      const length = road.to - road.from;
+      const mesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(
+          road.axis === "z" ? road.width : length,
+          road.axis === "z" ? length : road.width
+        ),
+        roadMat
+      );
+      mesh.rotation.x = -Math.PI / 2;
+      if (road.axis === "z") mesh.position.set(road.at, 0.08, 0);
+      else mesh.position.set(0, 0.08, road.at);
+      mesh.receiveShadow = true;
+      this.scene.add(mesh);
+    }
+  }
+
+  buildDistricts() {
+    // STRIP (tengah-utara): casino/hotel neon, gedung menengah.
+    this.buildBlockRow("STRIP", -180, 180, -270, -130, 10,
+      CONFIG.BUILDING_MIN_HEIGHT, CONFIG.BUILDING_MAX_HEIGHT);
+    // DOWNTOWN canyon: menara tinggi kiri-kanan jalan.
+    this.buildBlockRow("DOWNTOWN", -280, -40, -60, 160, 12,
+      CONFIG.TOWER_MIN_HEIGHT, CONFIG.TOWER_MAX_HEIGHT);
+    // ARCADE: jalan lebar + gedung hiburan ber-neon.
+    this.buildBlockRow("ARCADE", 20, 280, -60, 160, 10,
+      CONFIG.BUILDING_MIN_HEIGHT, 60);
+    // BEACH: gedung rendah + palm di tepi pantai.
+    this.buildBlockRow("BEACH", -280, 280, 185, 195, 6,
+      CONFIG.BUILDING_MIN_HEIGHT, 30);
+    this.buildPalms();
+    this.buildStreetLamps();
+  }
+
+  // Satu baris blok gedung di sepanjang jalan distrik.
+  buildBlockRow(district, x0, x1, z0, z1, count, minH, maxH) {
+    const rng = this.rng;
+    const palette = [0x2a2440, 0x332a4d, 0x241f38, 0x3a2f55];
+    for (let i = 0; i < count; i++) {
+      const t = count === 1 ? 0.5 : i / (count - 1);
+      const x = x0 + (x1 - x0) * t + (rng() - 0.5) * 12;
+      const z = z0 + (z1 - z0) * rng();
+      const w = 16 + rng() * 14;
+      const d = 16 + rng() * 14;
+      const h = minH + rng() * (maxH - minH);
+      const color = palette[Math.floor(rng() * palette.length)];
+      const building = new THREE.Mesh(
+        new THREE.BoxGeometry(w, h, d),
+        new THREE.MeshStandardMaterial({ color: color, roughness: 0.85 })
+      );
+      building.position.set(x, h / 2, z);
+      building.castShadow = true;
+      building.receiveShadow = true;
+      this.scene.add(building);
+      // Pita jendela berkelompok di fasad depan gedung.
+      const stripMat = new THREE.MeshBasicMaterial({ color: 0xffc46b });
+      const floors = Math.max(2, Math.floor(h / 8));
+      for (let f = 0; f < floors; f++) {
+        const strip = new THREE.Mesh(
+          new THREE.BoxGeometry(w * 0.7, 0.8, 0.2),
+          stripMat
+        );
+        strip.position.set(x, 4 + f * 7, z + d / 2 + 0.15);
+        this.scene.add(strip);
+      }
+      void district;
+    }
+  }
+
+  // Palm di BEACH.
+  buildPalms() {
+    const trunkMat = new THREE.MeshStandardMaterial({ color: 0x6b4a2f, roughness: 1 });
+    const leafMat = new THREE.MeshStandardMaterial({ color: 0x2e7d4f, roughness: 0.9 });
+    for (let i = 0; i < 10; i++) {
+      const x = -260 + i * 55 + (this.rng() - 0.5) * 10;
+      const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.8, 9, 6), trunkMat);
+      trunk.position.set(x, 4.5, 195);
+      trunk.castShadow = true;
+      this.scene.add(trunk);
+      const crown = new THREE.Mesh(new THREE.ConeGeometry(4, 3, 7), leafMat);
+      crown.position.set(x, 10, 195);
+      this.scene.add(crown);
+    }
+  }
+
+  // Tiang lampu jalan di tiap persimpangan utama.
+  buildStreetLamps() {
+    const poleMat = new THREE.MeshStandardMaterial({ color: 0x222226, roughness: 0.7 });
+    const bulbMat = new THREE.MeshBasicMaterial({ color: 0xffe9a8 });
+    for (let x = -240; x <= 240; x += 120) {
+      for (let z = -240; z <= 240; z += 120) {
+        const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.35, 8, 6), poleMat);
+        pole.position.set(x + 9, 4, z + 9);
+        this.scene.add(pole);
+        const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.7, 8, 6), bulbMat);
+        bulb.position.set(x + 9, 8.2, z + 9);
+        this.scene.add(bulb);
       }
     }
+  }
 
-    // --- Palem: beachfront x=214 tiap 20 m + beberapa di Strip ---
-    const palmSpots = [];
-    for (let z = -220; z <= 220; z += 20) palmSpots.push({ x: 214, z });
-    for (const s of [{ x: -26, z: 26 }, { x: 26, z: -26 }, { x: 78, z: 78 }, { x: -78, z: -78 }, { x: 130, z: 26 }]) {
-      palmSpots.push(s);
-    }
-    for (const s of palmSpots) {
-      const trunk = new THREE.Mesh(geo.palmTrunk, mat.trunk);
-      trunk.scale.set(1, 5, 1);
-      trunk.position.set(s.x, 2.5, s.z);
-      trunk.rotation.z = (rng() - 0.5) * 0.16;
-      scene.add(trunk);
-      const crown = new THREE.Mesh(geo.palmCrown, mat.palmLeaf);
-      crown.scale.set(1, 1, 1);
-      crown.position.set(s.x, 5.6, s.z);
-      scene.add(crown);
-    }
-
-    // --- Skyline siluet barat (x=-268) & utara (z=-268) + bukit hijau utara ---
-    for (let z = -240; z <= 240; z += 24) {
-      const h = 30 + rng() * 50;
-      box(scene, geo.unitBox, mat.skyline, -268, h / 2, z, 10, h, 18);
-    }
-    for (let x = -240; x <= 240; x += 24) {
-      const h = 24 + rng() * 40;
-      box(scene, geo.unitBox, mat.skyline, x, h / 2, -268, 18, h, 10);
-    }
-    for (let x = -220; x <= 220; x += 40) {
-      const h = 14 + rng() * 14;
-      box(scene, geo.unitBox, mat.hill, x, h / 2 - 2, -252, 36, h, 22);
-    }
-
-    // --- Gedung per blok ---
-    const neonMats = NEON_SIGNS.map((k) => mat[k]);
-    const awningMats = AWNINGS.map((k) => mat[k]);
-    const billboardMats = BILLBOARDS.map((k) => mat[k]);
-    let billboardsPlaced = 0;
-
-    for (const bx of BLOCK_CENTERS) {
-      for (const bz of BLOCK_CENTERS) {
-        const d = districtOf(bx, bz);
-        let count = 1;
-        let w = 30; let dep = 30; let hMin = 26; let hMax = 60;
-        if (d === 'downtown') { count = 1; w = 30; dep = 30; hMin = 26; hMax = 60; }
-        else if (d === 'strip') { count = 2 + Math.floor(rng() * 2); w = 16; dep = 18; hMin = 10; hMax = 28; }
-        else if (d === 'arcade') { count = 2; w = 15; dep = 20; hMin = 7; hMax = 16; }
-        else if (d === 'hills') { count = 1 + Math.floor(rng() * 2); w = 18; dep = 18; hMin = 6; hMax = 12; }
-        else { count = 1 + Math.floor(rng() * 2); w = 18; dep = 18; hMin = 8; hMax = 20; } // beach
-
-        for (let i = 0; i < count; i++) {
-          // Posisi di dalam blok 40x40 (jalan selebar 12 -> blok bebas 40 m),
-          // dijaga dari tepi blok supaya tidak menutup jalan.
-          const jx = count === 1 ? 0 : (rng() - 0.5) * (40 - w - 4);
-          const jz = count === 1 ? 0 : (rng() - 0.5) * (40 - dep - 4);
-          const cx = bx + jx;
-          const cz = bz + jz;
-          const h = hMin + rng() * (hMax - hMin);
-          const bodyMat = d === 'downtown' ? mat.downtown : mat.pastel[Math.floor(rng() * mat.pastel.length)];
-          const body = box(scene, geo.unitBox, bodyMat, cx, h / 2, cz, w, h, dep);
-          body.castShadow = true;
-          body.receiveShadow = true;
-          // Atap datar gelap.
-          box(scene, geo.unitBox, mat.roof, cx, h + 0.25, cz, w + 0.4, 0.5, dep + 0.4);
-          // §17.4: lantai atas setback (kotak lebih kecil di atap, tinggi 3-5).
-          const sbH = 3 + rng() * 2;
-          const sbW = w * (0.45 + rng() * 0.15);
-          const sbD = dep * (0.45 + rng() * 0.15);
-          box(scene, geo.unitBox, mat.setback, cx, h + 0.5 + sbH / 2, cz, sbW, sbH, sbD);
-          // §17.4: rooftop props — kotak AC + antena pada 50% gedung (deterministik).
-          if (rng() < 0.5) {
-            box(scene, geo.unitBox, mat.acUnit, cx + w * 0.22, h + 1.1, cz - dep * 0.2, 2.4, 1.2, 1.8);
-            const ant = new THREE.Mesh(geo.pole, mat.antenna);
-            ant.scale.set(1, 4 + rng() * 3, 1);
-            ant.position.set(cx - w * 0.22, h + 2.5, cz + dep * 0.2);
-            scene.add(ant);
-            box(scene, geo.lampBall, mat.lampRed, cx - w * 0.22, h + 4.6, cz + dep * 0.2, 1, 1, 1);
-          }
-          // §17.4: strip jendela emissive di KEEMPAT sisi fasad.
-          const winY = h * 0.55;
-          const winH = Math.max(1.2, h * 0.28);
-          // Depan (+z) & belakang (-z).
-          box(scene, geo.winStrip, mat.window, cx, winY, cz + dep / 2 + 0.06, w * 0.8, winH, 0.12);
-          box(scene, geo.winStrip, mat.window, cx, winY, cz - dep / 2 - 0.06, w * 0.8, winH, 0.12);
-          // Kiri (-x) & kanan (+x).
-          box(scene, geo.winStrip, mat.window, cx - w / 2 - 0.06, winY, cz, 0.12, winH, dep * 0.8);
-          box(scene, geo.winStrip, mat.window, cx + w / 2 + 0.06, winY, cz, 0.12, winH, dep * 0.8);
-          // Neon sign: lantai dasar (y~3.2, terbaca kamera chase rendah) di
-          // Strip/Arcade + di atas gedung.
-          if (d === 'strip' || d === 'arcade') {
-            const nm = neonMats[Math.floor(rng() * neonMats.length)];
-            box(scene, geo.unitBox, nm, cx, 3.2, cz + dep / 2 + 0.12, w * 0.55, 1.0, 0.15);
-            if (rng() < 0.5) {
-              box(scene, geo.unitBox, nm, cx, h + 1.4, cz + dep / 2 + 0.12, w * 0.4, 1.2, 0.15);
-            }
-            // §17.4: awning toko warna-warni di lantai dasar Strip/Arcade.
-            const am = awningMats[Math.floor(rng() * awningMats.length)];
-            const awn = box(scene, geo.unitBox, am, cx, 2.6, cz + dep / 2 + 0.9, w * 0.6, 0.25, 1.8);
-            awn.rotation.x = 0.35;
-          }
-          // Lampu merah di gedung Downtown tinggi (>35).
-          if (d === 'downtown' && h > 35) {
-            box(scene, geo.lampBall, mat.lampRed, cx, h + sbH + 0.8, cz, 1, 1, 1);
-          }
-          // §17.4: billboard emissive besar di 4 gedung Downtown tinggi (>35).
-          if (d === 'downtown' && h > 35 && billboardsPlaced < 4) {
-            const bm = billboardMats[billboardsPlaced % billboardMats.length];
-            box(scene, geo.unitBox, bm, cx, h * 0.72, cz + dep / 2 + 0.15, w * 0.7, h * 0.3, 0.2);
-            billboardsPlaced += 1;
-          }
-          this.colliders.push({ x0: cx - w / 2, z0: cz - dep / 2, x1: cx + w / 2, z1: cz + dep / 2 });
-        }
+  // Pier kayu di BEACH, menjorok ke laut.
+  buildPier() {
+    const woodMat = new THREE.MeshStandardMaterial({ color: 0x7a5a38, roughness: 1 });
+    const deck = new THREE.Mesh(
+      new THREE.BoxGeometry(16, 0.6, this.pier.zEnd - this.pier.zStart),
+      woodMat
+    );
+    deck.position.set(this.pier.x, 1.2, (this.pier.zStart + this.pier.zEnd) / 2);
+    deck.castShadow = true;
+    deck.receiveShadow = true;
+    this.scene.add(deck);
+    // Tiang penyangga pier.
+    for (let z = this.pier.zStart; z <= this.pier.zEnd; z += 15) {
+      for (const dx of [-7, 7]) {
+        const post = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.6, 4, 6), woodMat);
+        post.position.set(this.pier.x + dx, -0.5, z);
+        this.scene.add(post);
       }
     }
-
-    // --- Lampu lalu lintas di 8 persimpangan utama (§17.4) ---
-    for (let i = 0; i < TRAFFIC_LIGHT_SPOTS.length; i++) {
-      const s = TRAFFIC_LIGHT_SPOTS[i];
-      const px = s.x + 7.5;
-      const pz = s.z - 7.5;
-      const pole = new THREE.Mesh(geo.pole, mat.trafficPole);
-      pole.scale.set(1, 6.5, 1);
-      pole.position.set(px, 3.25, pz);
-      scene.add(pole);
-      const head = box(scene, geo.unitBox, mat.trafficHead, px, 6.9, pz, 0.7, 2.0, 0.7);
-      head.castShadow = false;
-      const lamps = {
-        red: box(scene, geo.lampBall, i % 2 === 0 ? mat.lampRed : mat.lampOff, px, 7.6, pz + 0.4, 1, 1, 1),
-        yellow: box(scene, geo.lampBall, mat.lampOff, px, 6.9, pz + 0.4, 1, 1, 1),
-        green: box(scene, geo.lampBall, i % 2 === 0 ? mat.lampOff : mat.lampGreen, px, 6.2, pz + 0.4, 1, 1, 1),
-      };
-      trafficLights.push({ phase: i % 2, lamps });
-    }
-
-    return {
-      half: WORLD_HALF,
-      roadPos: ROAD_POS,
-      blockCenters: BLOCK_CENTERS,
-      colliders: this.colliders,
-      roads: this.roads,
-      spawnPoints: this.spawnPoints,
-      seaMesh,
-      trafficLights,
-    };
-  },
-};
+  }
+}

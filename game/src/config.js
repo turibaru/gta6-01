@@ -1,140 +1,100 @@
-// NEON BAY: SUNSET RUN — config.js (R7 deepen)
-// Semua konstanta gameplay. Spec §3 + §17.2 (bike) + §17.3 (rifle).
+// NEON BAY: SUNSET RUN — central config (gta6-01, round 10)
+// Satu-satunya sumber konstanta bersama. Semua modul lain MENGIMPOR dari
+// file ini; jangan hardcode angka yang sama di dua tempat.
+// Determinisme: satu-satunya acak adalah mulberry32(seed) di bawah ini.
+// JANGAN pakai acak bawaan JS di mana pun di game.
 
 export const CONFIG = {
-  worldSize: 460,
-  worldHalf: 230,
-  goldenHour: true,
-  saveKey: 'neonbay-save-v1',
+  // Distrik (nama ini HARUS muncul persis sebagai label minimap).
+  DISTRICTS: ["STRIP", "DOWNTOWN", "ARCADE", "BEACH"],
 
-  footSpeed: 6.5,
-  footRunSpeed: 9.5,
-  playerHpMax: 100,
+  // Golden hour — intensitas cahaya (angka WAJIB persis, spec bagian 3).
+  SUN_INTENSITY: 1.6,
+  HEMI_INTENSITY: 1.05,
+  AMBIENT_INTENSITY: 0.35,
+  RIM_TEAL: 0.55,
 
-  carAccel: 22,
-  carBrake: 34,
-  carReverseAccel: 12,
-  carMaxSpeed: 42,
-  carMaxReverse: 12,
-  carSteer: 1.9,
-  carDrag: 0.35,
-  carHandbrake: 0.92,
-  carRadius: 2.2,
-  carConditionMax: 100,
+  // HUD / layout (angka WAJIB persis, spec bagian 4).
+  MINIMAP_SIZE: 240,
+  GARAGE_PANEL_WIDTH: 350,
+  GARAGE_PANEL_LEFT: 24,
 
-  // Motor (§17.2): lebih cepat + lincah, tapi rapuh (condition max 60).
-  bikeMaxSpeed: 48,
-  bikeAccel: 26,
-  bikeSteer: 2.3,
-  bikeRadius: 1.2,
-  bikeConditionMax: 60,
-  bikeColor: '#22d3ee',
+  // Gameplay.
+  CRUISE_SPEED: 12,
+  WORLD_SEED: 1337,
+  WANTED_MAX: 5,
+  RESPECT_MAX: 100,
+  START_MONEY: 0,
+  PIER_RIVAL_COUNT: 6,
 
-  pedRadius: 0.6,
-  trafficSpeed: 11,
-  trafficCount: 14,
-  pedCount: 22,
-  policeCountMax: 4,
+  // Canvas / render.
+  CANVAS_WIDTH: 1280,
+  CANVAS_HEIGHT: 720,
+  SHADOW_MAP_SIZE: 2048,
+  CAMERA_FOV: 60,
+  CAMERA_NEAR: 0.1,
+  CAMERA_FAR: 2000,
 
-  heatMax: 100,
-  heatPerStar: 20,
-  heatDecayPerSec: 2.2,
-  heatDecayHiddenPerSec: 7,
-  heatStealCar: 12,
-  heatHitPed: 18,
-  heatShoot: 10,
-  heatSpeedingNearCop: 6,
+  // Kota.
+  CITY_HALF: 300,
+  ROAD_WIDTH: 14,
+  BLOCK_SIZE: 60,
+  BUILDING_MIN_HEIGHT: 18,
+  BUILDING_MAX_HEIGHT: 90,
+  TOWER_MIN_HEIGHT: 70,
+  TOWER_MAX_HEIGHT: 140,
 
-  wastedFine: 200,
-  bustedFine: 250,
-  startMoney: 150,
+  // Entitas.
+  TRAFFIC_COLORS: ["#ff2e88", "#00e5ff", "#ff7a00", "#ffd400", "#f5f5f5"],
+  PED_SPEED_MIN: 1,
+  PED_SPEED_MAX: 2,
+  PLAYER_COLOR: "#ff2e88",
 
-  missionBeaconRadius: 5,
-  pickupRadius: 4.5,
+  // Warna neon / langit senja.
+  NEON_PINK: "#ff2e88",
+  NEON_CYAN: "#00e5ff",
+  NEON_YELLOW: "#ffd400",
+  NEON_ORANGE: "#ff7a00",
+  SKY_TOP: "#2b1055",
+  SKY_MID: "#ff6b35",
+  SKY_LOW: "#ffb36b",
+  FOG_COLOR: "#ff9a5c",
+  SUN_COLOR: "#ffb36b",
 
-  weaponRange: 90,
-  meleeRange: 2.4,
-  minimapRange: 130,
+  // Helikopter polisi di shot cover: (4, -30, alt 13) relatif terhadap
+  // pemain — 30 unit di DEPAN pemain (arah -z, ke arah kamera cover) agar
+  // terlihat jelas; +30 justru jatuh di belakang kamera (tak terlihat).
+  HELI_POS: { x: 4, y: 13, z: -30 },
+
+  // Loop.
+  MAX_DT: 0.2,
 };
 
-export const RESPECT_RANKS = [
-  { name: 'Rookie', points: 0 },
-  { name: 'Hustler', points: 150 },
-  { name: 'Wheelman', points: 400 },
-  { name: 'Kingpin', points: 800 },
-  { name: 'Neon Legend', points: 1500 },
-];
-
-export const WEAPON_DEFS = {
-  pistol: { key: 1, name: 'Pistol', ammo: 120, dmg: 34, rate: 0.28, range: 90, spread: 0.012, color: '#ffd166' },
-  scatter: { key: 2, name: 'Scattergun', ammo: 24, dmg: 22, rate: 0.85, range: 38, spread: 0.09, pellets: 6, color: '#ff7b54' },
-  smg: { key: 3, name: 'SMG', ammo: 120, dmg: 16, rate: 0.09, range: 70, spread: 0.035, auto: true, color: '#7ee8fa' },
-  fists: { key: 4, name: 'Fists', ammo: Infinity, dmg: 25, rate: 0.45, range: 2.4, melee: true, color: '#e2e8f0' },
-  // §17.3 — rifle: jarak jauh, damage besar, peluru sedikit.
-  rifle: { key: 5, name: 'Rifle', ammo: 40, dmg: 60, rate: 0.6, range: 140, spread: 0.004, color: '#facc15' },
-};
-
-export const WEAPON_ORDER = ['pistol', 'scatter', 'smg', 'fists', 'rifle'];
-
-export const RADIO_STATIONS = [
-  { name: 'NEON 99.1', desc: 'synthwave arp', bpm: 112, wave: 'sawtooth', root: 55, scale: [0, 3, 5, 7, 10, 12, 15], bass: true },
-  { name: 'OMBO 98.4', desc: 'bass groove', bpm: 96, wave: 'square', root: 49, scale: [0, 3, 5, 10, 12], bass: true },
-  { name: 'VICE FM', desc: 'chill pads', bpm: 72, wave: 'triangle', root: 65.4, scale: [0, 2, 4, 7, 9, 12], bass: false },
-];
-
-export const GARAGE_UPGRADES = {
-  engineCost: 300,
-  engineMaxLevel: 3,
-  engineSpeedBonus: 6,
-  engineAccelBonus: 4,
-  repairCost: 150,
-  paintCost: 100,
-};
-
-export const PAINT_COLORS = [
-  '#ff2d78', '#ffb020', '#22d3ee', '#a3e635',
-  '#8b5cf6', '#f43f5e', '#e2e8f0', '#0ea5e9',
-];
-
-export const PLAYER_COLORS = {
-  player: '#ff2d78',
-  playerCar: '#ff2d78',
-  police: '#1d4ed8',
-  rival: '#f43f5e',
-  traffic: ['#f59e0b', '#38bdf8', '#a3e635', '#e2e8f0', '#f472b6', '#94a3b8'],
-};
-
-// §17.4 — variasi tambahan: +6 warna traffic & pejalan kaki bervariasi.
-export const TRAFFIC_COLORS_EXTRA = ['#f97316', '#84cc16', '#06b6d4', '#ec4899', '#facc15', '#a78bfa'];
-
-export const CAR_MODELS = ['sedan', 'sport', 'truck', 'bike'];
-
-// Posisi jalan grid (§2): dipakai render.js untuk gambar jalan di minimap.
-export const ROAD_POS = [-208, -156, -104, -52, 0, 52, 104, 156, 208];
-
-export function clamp(v, lo, hi) {
-  return v < lo ? lo : v > hi ? hi : v;
-}
-
-export function lerp(a, b, t) {
-  return a + (b - a) * t;
-}
-
-export function dist2d(ax, az, bx, bz) {
-  const dx = ax - bx;
-  const dz = az - bz;
+// dist2d — jarak Euclidean 2D antara (x1, z1) dan (x2, z2).
+// Dipakai subsistem untuk jarak ke target/beacon (helper murni).
+export function dist2d(x1, z1, x2, z2) {
+  const dx = x2 - x1;
+  const dz = z2 - z1;
   return Math.sqrt(dx * dx + dz * dz);
 }
 
-// Interpolasi sudut dengan beban terpendek (menangani wrap +-PI).
-export function angleLerp(a, b, t) {
-  let d = (b - a) % (Math.PI * 2);
-  if (d > Math.PI) d -= Math.PI * 2;
-  if (d < -Math.PI) d += Math.PI * 2;
-  return a + d * t;
+// clamp — batasi nilai ke [min, max]. Dipakai subsistem untuk dt,
+// kecepatan, dan nilai HUD (helper murni, tanpa state).
+export function clamp(value, min, max) {
+  if (value < min) return min;
+  if (value > max) return max;
+  return value;
 }
 
-// Vektor maju dari heading (radian): (sin, cos) di bidang X/Z.
-export function forward(heading) {
-  return { x: Math.sin(heading), z: Math.cos(heading) };
+// mulberry32 — PRNG deterministik 32-bit.
+// Tiap panggil: state += 0x6D2B79F5, lalu scramble bit, hasil di [0, 1).
+export function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0;
+    a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
 }

@@ -1,215 +1,141 @@
-// rivals.js — Rival: shootout, balapan, getaway (misi 9) — GTA 6 R7
-// Spec §5 + §17.1/§17.7. spawnShootout(x,z,n), spawnRace(gates,x,z),
-// clear() + spawnGetawayCars(4) untuk misi 9: 4 mobil rival condition 60
-// (rifle 1 hit, pistol 2 hit, smg 4 hit), kecepatan kabur 12-14, tetap di
-// jalan grid, rute loop di Strip agar bisa dicegat, JANGAN despawn.
-// Rival menembak pemain; kill stage menghitung defeatedCount; misi 9
-// menghitung stoppedCount (mobil condition 0).
+// rivals.js — Rival (musuh misi pier shootout) — NEON BAY: SUNSET RUN (R10)
+// Compose dari r10-design-spec.md bagian 11 (Rivals). Determinisme penuh:
+// acak hanya via mulberry32 dari config.js (tanpa sumber acak lain).
+import { CONFIG, mulberry32 } from './config.js';
 
-export const ROAD_POS = [-208, -156, -104, -52, 0, 52, 104, 156, 208];
-
-function mulberry32(seed) {
-  let a = seed >>> 0;
-  return function () {
-    a |= 0; a = (a + 0x6D2B79F5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+// Posisi pier BEACH: dermaga kayu menjorok ke laut. Rival tersebar sepanjang
+// pier (sumbu x), semua menghadap pemain dan TIDAK ada yang bersembunyi di
+// balik beacon/mobil — semuanya harus terlihat di shot 4 (mission).
+const PIER_Z = 38;
+const PIER_X_MIN = -14;
+const PIER_X_MAX = 14;
+const RIVAL_SEED_OFFSET = 91;
+// Puncak dek pier kayu (world.buildPier: y=1.2, tebal 0.6) — rival berdiri
+// DI ATAS dek, bukan tenggelam di dalamnya.
+const PIER_DECK_TOP = 1.5;
 
 export class Rivals {
-  constructor() {
-    this.list = []; // semua rival aktif (shooter / racer / getaway)
-    this.defeatedCount = 0; // kill stage (misi 4)
-    this.stoppedCount = 0; // misi 9: mobil condition 0
-    this.racePosition = 4;
-    this.playerLap = 0;
-    this.raceFinished = false;
-    this.raceGates = [];
-    this._shootTimer = 0;
+  constructor(game) {
+    this.game = game;
+    this.rivals = [];
+    this._nextId = 1;
   }
 
-  get shooters() { return this.list.filter((r) => r.kind === 'shooter'); }
-  get racers() { return this.list.filter((r) => r.kind === 'racer'); }
-  get getawayCars() { return this.list.filter((r) => r.kind === 'getaway'); }
+  // Spawn n rival di pier BEACH, posisi tersebar (deterministik via seed).
+  // Mengembalikan array rival yang dibuat.
+  spawnPier(n) {
+    this.clear();
+    const rng = mulberry32(CONFIG.WORLD_SEED + RIVAL_SEED_OFFSET);
+    // Posisi pier ASLI dari world (x=120, z 190-280) — konstanta lokal di
+    // atas hanya fallback bila world belum menyediakan pierRivalSpots.
+    const spots = (this.game && this.game.world && this.game.world.pierRivalSpots) || null;
+    for (let i = 0; i < n; i++) {
+      let x;
+      let z;
+      if (spots && spots[i]) {
+        x = spots[i].x;
+        z = spots[i].z;
+      } else {
+        const t = n === 1 ? 0.5 : i / (n - 1);
+        x = PIER_X_MIN + t * (PIER_X_MAX - PIER_X_MIN) + (rng() - 0.5) * 1.2;
+        z = PIER_Z + (rng() - 0.5) * 2.0;
+      }
+      const rival = {
+        id: this._nextId++,
+        x,
+        z,
+        hp: 100,
+        down: false,
+        mesh: null,
+        gun: null,
+      };
+      rival.mesh = this._buildMesh(rival);
+      this.rivals.push(rival);
+    }
+    return this.rivals;
+  }
 
+  // Rival menembak pemain: tiap rival hidup mengurangi HP pemain.
+  // player: objek dengan properti hp (angka). Mengembalikan total damage.
+  shootAt(player) {
+    if (!player || typeof player.hp !== 'number') return 0;
+    const alive = this.rivals.filter((r) => !r.down);
+    let damage = 0;
+    for (const rival of alive) {
+      damage += 4;
+      void rival;
+    }
+    player.hp = Math.max(0, player.hp - damage);
+    return damage;
+  }
+
+  // Rival tertembak -> jatuh (down). Menerima objek rival (dari spawnPier
+  // atau dari daftar this.rivals). Mengembalikan true bila rival jatuh.
+  hit(rival) {
+    if (!rival || rival.down) return false;
+    rival.down = true;
+    rival.hp = 0;
+    if (rival.mesh) {
+      // Jatuh telentang di atas pier agar tetap terlihat (bukan hilang).
+      rival.mesh.rotation.x = -Math.PI / 2;
+      rival.mesh.position.y = PIER_DECK_TOP + 0.25;
+    }
+    return true;
+  }
+
+  // Jumlah rival yang masih hidup (berdiri).
+  alive() {
+    return this.rivals.filter((r) => !r.down).length;
+  }
+
+  // Jumlah total rival di pier (hidup + jatuh) — dipakai HUD "2/6".
+  count() {
+    return this.rivals.length;
+  }
+
+  // Hapus semua rival (bersihkan scene).
   clear() {
-    this.list = [];
-    this.defeatedCount = 0;
-    this.stoppedCount = 0;
-    this.racePosition = 4;
-    this.playerLap = 0;
-    this.raceFinished = false;
-    this.raceGates = [];
-    this._shootTimer = 0;
-    return this;
-  }
-
-  spawnShootout(x, z, n = 6) {
-    const rng = mulberry32(20261121 + Math.floor(x) + Math.floor(z));
-    for (let i = 0; i < n; i++) {
-      const a = rng() * Math.PI * 2;
-      const r = 6 + rng() * 14;
-      this.list.push({
-        kind: 'shooter',
-        x: clamp(x + Math.sin(a) * r, -235, 235),
-        z: clamp(z + Math.cos(a) * r, -235, 235),
-        heading: rng() * Math.PI * 2,
-        hp: 100,
-        alive: true,
-        speed: 3.5,
-        color: '#f43f5e',
-        radius: 0.9,
-      });
-    }
-    return this.list;
-  }
-
-  // gates: [{x,z}...] sirkuit; startX/startZ garis start.
-  spawnRace(gates, startX = 0, startZ = 0) {
-    this.raceGates = gates || [];
-    this.playerLap = 0;
-    this.raceFinished = false;
-    this.racePosition = 4;
-    for (let i = 0; i < 3; i++) {
-      this.list.push({
-        kind: 'racer',
-        x: startX + (i - 1) * 4,
-        z: startZ + 6 + i * 3,
-        heading: 0,
-        hp: 100,
-        alive: true,
-        speed: 26 + i * 1.5,
-        gateIndex: 0,
-        lap: 0,
-        color: ['#f43f5e', '#f59e0b', '#a3e635'][i],
-        radius: 2.2,
-        condition: 100,
-      });
-    }
-    return this.list;
-  }
-
-  // Misi 9 VIGILANTE (§17.7b): 4 mobil di Strip, condition 60,
-  // kecepatan kabur 12-14, rute loop persegi di jalan grid Strip,
-  // JANGAN despawn (tetap ada sampai condition 0).
-  spawnGetawayCars(n = 4) {
-    const loop = [
-      { x: -52, z: -52 }, { x: 52, z: -52 }, { x: 52, z: 52 }, { x: -52, z: 52 },
-    ];
-    for (let i = 0; i < n; i++) {
-      const start = loop[i % loop.length];
-      this.list.push({
-        kind: 'getaway',
-        isRivalCar: true,
-        x: start.x + (i % 2 === 0 ? 0 : 4),
-        z: start.z + (i < 2 ? 0 : 4),
-        heading: 0,
-        hp: null,
-        condition: 60,
-        maxCondition: 60,
-        alive: true,
-        stopped: false,
-        speed: 12 + i * 0.6, // 12-14
-        loop,
-        loopIndex: i % loop.length,
-        color: '#f43f5e',
-        radius: 2.2,
-        model: 'sedan',
-      });
-    }
-    return this.getawayCars;
-  }
-
-  // Hitung ulang stoppedCount dari kondisi mobil getaway.
-  recountStopped() {
-    let n = 0;
-    for (const c of this.getawayCars) {
-      if (c.condition <= 0 && !c.stopped) c.stopped = true;
-      if (c.stopped) n++;
-    }
-    this.stoppedCount = n;
-    return n;
-  }
-
-  // Dipanggil tiap frame. ctx: { damagePlayer(n), player {x,z,hp} }.
-  update(dt, player, ctx = {}) {
-    // --- shooter: dekati pemain sampai ~25 m lalu tembak ---
-    this._shootTimer -= dt;
-    for (const r of this.shooters) {
-      if (!r.alive) continue;
-      const dx = player.x - r.x;
-      const dz = player.z - r.z;
-      const dist = Math.hypot(dx, dz) || 1;
-      r.heading = Math.atan2(dx, dz);
-      if (dist > 25) {
-        r.x += (dx / dist) * r.speed * dt;
-        r.z += (dz / dist) * r.speed * dt;
-      } else if (this._shootTimer <= 0 && dist < 60) {
-        // Satu tembakan per interval bersama (damage kecil, hindari insta-kill).
-        if (ctx.damagePlayer) ctx.damagePlayer(4);
-        else if (player.hp != null) player.hp = Math.max(0, player.hp - 4);
-        this._shootTimer = 0.9;
+    for (const rival of this.rivals) {
+      if (rival.mesh && this.game && this.game.world && this.game.world.scene) {
+        this.game.world.scene.remove(rival.mesh);
       }
     }
-    // Rival shooter yang hp-nya 0 -> kalah.
-    let defeated = 0;
-    for (const r of this.shooters) {
-      if (r.hp <= 0 && r.alive) r.alive = false;
-      if (!r.alive) defeated++;
-    }
-    this.defeatedCount = defeated;
-
-    // --- racer: ikuti gate sirkuit ---
-    for (const r of this.racers) {
-      if (!this.raceGates.length) break;
-      const g = this.raceGates[r.gateIndex % this.raceGates.length];
-      const dx = g.x - r.x;
-      const dz = g.z - r.z;
-      const dist = Math.hypot(dx, dz) || 1;
-      r.heading = Math.atan2(dx, dz);
-      r.x += (dx / dist) * r.speed * dt;
-      r.z += (dz / dist) * r.speed * dt;
-      if (dist < 6) {
-        r.gateIndex++;
-        if (r.gateIndex % this.raceGates.length === 0) r.lap++;
-      }
-    }
-
-    // --- getaway: loop persegi di jalan grid Strip, 12-14 m/dtk ---
-    for (const c of this.getawayCars) {
-      if (c.condition <= 0) {
-        if (!c.stopped) c.stopped = true;
-        continue; // berhenti di tempat, TIDAK despawn
-      }
-      const target = c.loop[(c.loopIndex + 1) % c.loop.length];
-      const dx = target.x - c.x;
-      const dz = target.z - c.z;
-      const dist = Math.hypot(dx, dz) || 1;
-      c.heading = Math.atan2(dx, dz);
-      c.x += (dx / dist) * c.speed * dt;
-      c.z += (dz / dist) * c.speed * dt;
-      if (dist < 4) c.loopIndex = (c.loopIndex + 1) % c.loop.length;
-    }
-    this.recountStopped();
-    return this.list;
+    this.rivals = [];
   }
 
-  toSyncList() {
-    return this.list
-      .filter((r) => r.alive || r.kind === 'getaway')
-      .map((r) => ({
-        kind: r.kind === 'getaway' ? 'rival-car' : 'rival',
-        x: r.x, z: r.z, heading: r.heading, color: r.color,
-        model: r.kind === 'getaway' ? 'sedan' : undefined,
-        alt: r.kind === 'getaway' ? r.condition : r.hp,
-        isRivalCar: r.kind === 'getaway',
-        condition: r.condition,
-      }));
+  // Figur gelap + senjata, berdiri di pier. Mesh hanya dibuat bila THREE
+  // tersedia (headless/test tanpa renderer tetap jalan secara logika).
+  _buildMesh(rival) {
+    if (typeof THREE === 'undefined') return null;
+    const group = new THREE.Group();
+    const dark = new THREE.MeshStandardMaterial({ color: 0x1a1a22, roughness: 0.8 });
+    const skin = new THREE.MeshStandardMaterial({ color: 0xc98d64, roughness: 0.7 });
+    // Badan (kapsul pendek) + kepala. CapsuleGeometry tidak ada di three
+    // vendor lama — fallback ke silinder (pola yang sama di entities.js).
+    let body;
+    try {
+      body = new THREE.Mesh(new THREE.CapsuleGeometry(0.32, 0.7, 4, 8), dark);
+    } catch (e) {
+      body = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 1.1, 8), dark);
+    }
+    body.position.y = 0.95;
+    group.add(body);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.22, 12, 10), skin);
+    head.position.y = 1.75;
+    group.add(head);
+    // Senjata: silinder gelap di tangan, mengarah ke pemain.
+    const gunMat = new THREE.MeshStandardMaterial({ color: 0x222226, roughness: 0.4, metalness: 0.6 });
+    const gun = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.9, 8), gunMat);
+    gun.rotation.z = Math.PI / 2;
+    gun.position.set(0.35, 1.15, 0.25);
+    group.add(gun);
+    rival.gun = gun;
+    group.position.set(rival.x, PIER_DECK_TOP, rival.z);
+    // Menghadap ke arah darat (pemain datang dari arah -z).
+    group.rotation.y = Math.PI;
+    if (this.game && this.game.world && this.game.world.scene) {
+      this.game.world.scene.add(group);
+    }
+    return group;
   }
 }
-
-export default Rivals;

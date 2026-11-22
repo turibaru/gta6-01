@@ -1,703 +1,356 @@
-// main.js — NEON BAY: SUNSET RUN (ronde 7, deepen)
-// Class Game (§7 + §17.1/§17.2/§17.3). Boot, loop, HUD, kontrol global,
-// misi, wanted, save/load. window.__neonBay diset SEAWAL MUNGKIN (§16b).
-// Wiring eksplisit: tiap sistem dibangun dengan deps yang dibutuhkannya
-// (B2 tidak mengimpor config.js — jangan andalkan konstanta bersama).
-// Garage: `garage.open` adalah BOOLEAN; buka/tutup via openPanel() /
-// closePanel() / toggle() — JANGAN panggil garage.open() sebagai fungsi.
+// NEON BAY: SUNSET RUN — orchestrator (gta6-01, round 10)
+// Kelas Game: boot berurutan, loop tiap frame, title screen (frozen).
+//
+// KONVENSI CONSTRUCTOR (satu pola, konsisten di semua modul):
+// - Renderer menerima canvas (string id atau elemen).
+// - World menerima seed (number).
+// - SEMUA subsistem lain menerima instance Game di constructor:
+//   new Entities(game), new Garage(game), ... new Shots(game).
+// - Visuals juga menerima game (opsional).
+// Semua modul mengimpor konstanta dari config.js, bukan hardcode.
 
-import { CONFIG, WEAPON_ORDER, clamp, dist2d } from './config.js';
-import { World } from './world.js';
-import { Entities } from './entities.js';
-import { Heat } from './heat.js';
-import { Weapons } from './weapons.js';
-import { Rivals } from './rivals.js';
-import { Garage } from './garage.js';
-import { Respect } from './respect.js';
-import { Radio } from './radio.js';
-import { Dialog } from './dialog.js';
-import { AudioSys } from './audio.js';
-import { Input } from './input.js';
-import { Renderer } from './render.js';
-import { Beacon } from './beacon.js';
-import { Visuals } from './visuals.js';
-import { dressWorld } from './dressing.js';
-import { Missions } from './missions.js';
-import { shotFromUrl, applyShotPreset } from './shots.js';
-
-const SAVE_KEY = (CONFIG && CONFIG.saveKey) || 'neonbay-save-v1';
-const START_MONEY = (CONFIG && CONFIG.startMoney) || 150;
-
-function el(id) {
-  return (typeof document !== 'undefined') ? document.getElementById(id) : null;
-}
+import { CONFIG } from "./config.js";
+import { Renderer } from "./render.js";
+import { Visuals } from "./visuals.js";
+import { World } from "./world.js";
+import { Entities } from "./entities.js";
+import { Garage } from "./garage.js";
+import { Heat } from "./heat.js";
+import { Rivals } from "./rivals.js";
+import { Missions } from "./missions.js";
+import { Weapons } from "./weapons.js";
+import { Input } from "./input.js";
+import { Respect } from "./respect.js";
+import { Radio } from "./radio.js";
+import { Audio } from "./audio.js";
+import { Beacon } from "./beacon.js";
+import { Dialog } from "./dialog.js";
+import { Dressing } from "./dressing.js";
+import { Shots } from "./shots.js";
 
 export class Game {
-  constructor() {
-    this.state = { money: START_MONEY, score: 0, jobsDone: 0 };
-    this.stateName = 'title'; // 'title' | 'play' | 'pause' | 'wasted'
-    this.frozen = false;
-    this.shotMode = null;
-    this._lastTs = 0;
-    this._rafId = 0;
-    this._toastTimer = null;
-    this._bustedCooldown = 0;
-    this._bustedPending = false;
-    this._prevX = 0;
-    this._prevZ = 0;
-    this._speedKmh = 0;
-    this._exhaustTimer = 0;
-    this._prevStopped = 0;
-    this._hudCache = new Map();
-    // Diisi boot(): renderer, worldData, spawns, entities, heat, weapons,
-    // rivals, garage, respect, radio, dialog, audio, input, visuals, beacon.
-    this.renderer = null;
-    this.worldData = null;
-    this.spawns = null;
-    this.entities = null;
-    this.heat = null;
-    this.weapons = null;
-    this.rivals = null;
-    this.garage = null;
-    this.respect = null;
-    this.radio = null;
-    this.dialog = null;
-    this.audio = null;
-    this.input = null;
-    this.visuals = null;
-    this.beacon = null;
-    this.missions = null;
+  constructor(canvas) {
+    this.canvas = canvas || null;
+    this.config = CONFIG;
+    this.frozen = true; // Title screen: update berhenti, render tetap jalan.
+    this.lastTime = 0;
+    this.speed = 0;
+    this.money = CONFIG.START_MONEY;
+    this.camera = null;
+    this.bootErrors = [];
+    this.booted = false;
+    this.player = null; // Objek pemain (dibuat di boot, mesh sedan default).
+    this.playerPos = null; // Alias {x, z} pemain (dipakai heat/weapons).
+    this.shotMode = false; // true bila ?shot= valid diterapkan (title disembunyikan).
+
+    // Renderer (canvas) + World (seed) — dua pola khusus, lihat komentar atas.
+    this.renderer = this.safeCreate("renderer", () => new Renderer(canvas));
+    this.world = this.safeCreate("world", () => new World(CONFIG.WORLD_SEED));
+    this.visuals = this.safeCreate("visuals", () => new Visuals(this));
+
+    // Semua subsistem menerima game.
+    this.entities = this.safeCreate("entities", () => new Entities(this));
+    this.garage = this.safeCreate("garage", () => new Garage(this));
+    this.heat = this.safeCreate("heat", () => new Heat(this));
+    this.rivals = this.safeCreate("rivals", () => new Rivals(this));
+    this.missions = this.safeCreate("missions", () => new Missions(this));
+    this.weapons = this.safeCreate("weapons", () => new Weapons(this));
+    this.input = this.safeCreate("input", () => new Input(this));
+    this.respect = this.safeCreate("respect", () => new Respect(this));
+    this.radio = this.safeCreate("radio", () => new Radio(this));
+    this.audio = this.safeCreate("audio", () => new Audio(this));
+    this.beacon = this.safeCreate("beacon", () => new Beacon(this));
+    this.dialog = this.safeCreate("dialog", () => new Dialog(this));
+    this.dressing = this.safeCreate("dressing", () => new Dressing(this));
+    this.shots = this.safeCreate("shots", () => new Shots(this));
   }
 
-  // ---- boot ----
+  // Konstruksi subsistem tidak boleh melempar: catat, lanjutkan, boot tetap 0 exception.
+  safeCreate(name, fn) {
+    try {
+      return fn();
+    } catch (err) {
+      this.bootErrors.push(name + ": " + (err instanceof Error ? err.message : String(err)));
+      return null;
+    }
+  }
+
+  safeCall(name, fn) {
+    try {
+      fn();
+    } catch (err) {
+      this.bootErrors.push(name + ": " + (err instanceof Error ? err.message : String(err)));
+    }
+  }
+
+  // Inisialisasi berurutan: config -> renderer -> world -> entities -> HUD
+  // -> minimap -> beacon -> shot preset. Harus 0 exception.
   boot() {
-    // §16b: window.__neonBay SEAWAL MUNGKIN — sebelum build dunia yang berat.
-    if (typeof window !== 'undefined') window.__neonBay = this;
-
-    this.input = new Input();
-    if (typeof this.input.attach === 'function') this.input.attach(window);
-
-    this.audio = new AudioSys();
-    this.radio = new Radio(this.audio);
-    this.dialog = new Dialog();
-    this.heat = new Heat();
-    this.respect = new Respect(0);
-    this.garage = new Garage();
-    this.rivals = new Rivals();
-    this.visuals = new Visuals();
-    this.beacon = new Beacon(0, 0);
-    this.missions = new Missions({
-      dialog: this.dialog,
-      audio: this.audio,
-      heat: this.heat,
-      rivals: this.rivals,
-      respect: this.respect,
-      state: this.state,
+    this.bootErrors = [];
+    this.safeCall("config", () => {
+      if (!CONFIG || CONFIG.WORLD_SEED !== 1337) throw new Error("config invalid");
     });
-    // Weapons: deps eksplisit — asal tembakan + daftar target + heat/audio.
-    // Tembakan ke mobil rival misi 9 tidak menambah heat (ditangani
-    // weapons.js §17.7b via hit.isRivalCar).
-    this.weapons = new Weapons({
-      heat: this.heat,
-      audio: this.audio,
-      getOrigin: () => {
-        const p = this.entities ? this.entities.player : { x: 0, z: 0, heading: 0 };
-        return { x: p.x, z: p.z, heading: p.heading };
-      },
-      getTargets: () => (this.rivals ? this.rivals.list : []),
+    this.safeCall("renderer", () => {
+      if (this.renderer) this.renderer.setSun(CONFIG.SUN_INTENSITY);
     });
-
-    // Renderer + dunia (berat) — SETELAH __neonBay diset.
-    this.renderer = new Renderer(el('game-canvas'));
-    this.worldData = World.build(this.renderer.scene);
-    if (typeof this.renderer.setWorld === 'function') {
-      this.renderer.setWorld(this.worldData);
-    }
-    try {
-      dressWorld(this.renderer.scene, this.worldData, (typeof window !== 'undefined') ? window.THREE : null);
-    } catch (e) { /* dressing opsional */ }
-
-    this.entities = new Entities(this.worldData);
-    this.spawns = this.entities.spawns || (this.worldData && this.worldData.spawnPoints) || {
-      player: { x: 0, z: 26 },
-      garage: { x: -52, z: 104 },
-      pier: { x: 225, z: 0 },
-      hideout: { x: 78, z: -78 },
-      arcade: { x: 26, z: 182 },
-      extraction: { x: 208, z: -208 },
-    };
-    this._prevX = this.entities.player.x;
-    this._prevZ = this.entities.player.z;
-
-    // Garasi: wiring tombol panel (B2 hanya me-wire [data-car] + close).
-    if (typeof this.garage.bindPanel === 'function') {
-      this.garage.bindPanel({
-        car: this.entities.playerCar,
-        onSelectVehicle: (model) => {
-          this.garage.selectVehicle(model, this.entities.playerCar);
-          this.garage.applyTo(this.entities.playerCar);
-          this._markSelectedVehicle();
-        },
-      });
-    }
-    this._wireButtons();
-    this._load();
-
-    // Screenshot preset (?shot=...) diterapkan SEBELUM frame pertama.
-    const shot = shotFromUrl();
-    if (shot) applyShotPreset(shot, this);
-
-    this._syncScreens();
-    this._updateHUD();
-    this._lastTs = 0;
-    const loop = (ts) => {
-      this._rafId = requestAnimationFrame(loop);
-      this._frame(ts);
-    };
-    this._rafId = requestAnimationFrame(loop);
-    return this;
-  }
-
-  _wireButtons() {
-    const titleBtn = el('title-start');
-    if (titleBtn) titleBtn.addEventListener('click', () => this._onEnter());
-    const wastedBtn = el('wasted-continue');
-    if (wastedBtn) wastedBtn.addEventListener('click', () => this._onEnter());
-    const engineBtn = el('garage-engine');
-    if (engineBtn) {
-      engineBtn.addEventListener('click', () => {
-        const r = this.garage.upgrade(this.state);
-        this.showToast(r.ok ? 'Mesin naik ke level ' + r.level + '! (-$300)' : 'Tidak bisa upgrade: ' + (r.reason === 'max-level' ? 'sudah max' : 'uang kurang'));
-        this._save();
-      });
-    }
-    const repairBtn = el('garage-repair');
-    if (repairBtn) {
-      repairBtn.addEventListener('click', () => {
-        const r = this.garage.repair(this.state, this.entities.playerCar);
-        this.showToast(r.ok ? 'Mobil diperbaiki! (-$150)' : 'Uang kurang untuk perbaikan.');
-        this._save();
-      });
-    }
-    const paintBtn = el('garage-paint');
-    if (paintBtn) {
-      paintBtn.addEventListener('click', () => {
-        const r = this.garage.paint(this.state, this.entities.playerCar);
-        this.showToast(r.ok ? 'Mobil dicat! (-$100)' : 'Uang kurang untuk cat.');
-        this._save();
-      });
-    }
-  }
-
-  _markSelectedVehicle() {
-    if (typeof document === 'undefined') return;
-    const panel = el('garage-panel');
-    if (!panel) return;
-    panel.querySelectorAll('[data-car]').forEach((btn) => {
-      if (btn.getAttribute('data-car') === this.garage.vehicle) {
-        btn.classList.add('selected');
-      } else {
-        btn.classList.remove('selected');
-      }
+    this.safeCall("world", () => {
+      if (this.world) this.world.build();
     });
-  }
-
-  // ---- loop ----
-  _frame(ts) {
-    const dt = this._lastTs ? clamp((ts - this._lastTs) / 1000, 0, 0.05) : 0.016;
-    this._lastTs = ts;
-    try {
-      if (!this.frozen) this._handleGlobalKeys();
-      if (this.frozen) {
-        // Mode screenshot: render saja, tanpa update.
-        this._renderFrame(dt, true);
-      } else if (this.stateName === 'play') {
-        this._update(dt);
-        this._renderFrame(dt, false);
-      } else {
-        // title / pause / wasted: dunia diam, tetap render backdrop.
-        this._renderFrame(dt, false);
-      }
-      this._updateHUD();
-      this._syncScreens();
-    } catch (e) {
-      // Jangan matikan loop karena satu frame gagal.
-      if (typeof console !== 'undefined' && console.error) console.error(e);
-    } finally {
-      if (this.input && typeof this.input.endFrame === 'function') {
-        this.input.endFrame();
-      }
-    }
-  }
-
-  // Kontrol global — dicek di SEMUA stateName (bukan cuma 'play'),
-  // supaya ENTER dari title/pause/wasted selalu jalan (pelajaran R6).
-  _handleGlobalKeys() {
-    const input = this.input;
-    if (!input) return;
-    if (input.wasPressed('Enter')) this._onEnter();
-    if (input.wasPressed('KeyP', 'Escape')) this._togglePause();
-    if (input.wasPressed('KeyM')) {
-      if (this.audio && typeof this.audio.toggleMute === 'function') {
-        const muted = this.audio.toggleMute();
-        this.showToast(muted ? 'Suara dimatikan (M)' : 'Suara dinyalakan (M)');
-      }
-    }
-    if (this.stateName !== 'play') return;
-    if (input.wasPressed('KeyR')) {
-      const name = this.radio.next();
-      this.showToast('Radio: ' + name);
-    }
-    if (input.wasPressed('KeyG')) this._toggleGarage();
-    if (input.wasPressed('KeyE')) this._toggleEnterCar();
-    for (let i = 0; i < WEAPON_ORDER.length; i++) {
-      if (input.wasPressed('Digit' + (i + 1), 'Numpad' + (i + 1))) {
-        this.weapons.select(WEAPON_ORDER[i]);
-        this.showToast('Senjata: ' + this.weapons.displayName);
-      }
-    }
-    if (input.shootPressed) this._shoot();
-  }
-
-  _onEnter() {
-    if (this.stateName === 'title') {
-      this.stateName = 'play';
-      if (this.audio) this.audio.resume();
-      this.radio.setPlaying(true);
-      if (this.state.jobsDone === 0 && this.missions.completed === 0) {
-        this.dialog.show('Mira', 'Selamat datang di Neon Bay. Pergi ke garage dan tekan ENTER untuk mulai job pertama.', 6);
-      }
-      return;
-    }
-    if (this.stateName === 'pause') {
-      this.stateName = 'play';
-      return;
-    }
-    if (this.stateName === 'wasted') {
-      this._respawnAfterWasted();
-      return;
-    }
-    // stateName 'play'
-    if (this.dialog.visible) {
-      this.dialog.hide();
-      return;
-    }
-    if (this.garage.open) return; // panel garasi terbuka — ENTER bukan job
-    if (this.missions.active) return; // misi sedang berjalan
-    const g = this.spawns.garage;
-    const p = this.entities.player;
-    if (dist2d(p.x, p.z, g.x, g.z) > 8) {
-      this.showToast('Pergi ke marker garage dulu untuk mulai job.');
-      return;
-    }
-    const def = this.missions.nextDef();
-    if (!def) {
-      this.showToast('Semua 10 job selesai — NEON LEGEND! Free roam.');
-      return;
-    }
-    if (this.missions.begin(this.spawns)) this._save(); // autosave saat job dimulai (playtest langkah 12 membaca save ini)
-  }
-
-  _togglePause() {
-    if (this.stateName === 'play') {
-      this.stateName = 'pause';
-      this._save();
-    } else if (this.stateName === 'pause') {
-      this.stateName = 'play';
-    }
-  }
-
-  _toggleGarage() {
-    const g = this.spawns.garage;
-    const p = this.entities.player;
-    if (dist2d(p.x, p.z, g.x, g.z) > 8) {
-      if (this.garage.open) this.garage.closePanel();
-      return;
-    }
-    // garage.open adalah BOOLEAN; buka/tutup via toggle()/openPanel()/closePanel().
-    this.garage.toggle();
-    if (this.garage.open) {
-      this._markSelectedVehicle();
-      if (this.weapons && typeof this.weapons.refillAll === 'function') {
-        this.weapons.refillAll(); // refill di garasi (termasuk rifle, §17.3)
-      }
-    }
-  }
-
-  _toggleEnterCar() {
-    if (this.garage.open) return;
-    const p = this.entities.player;
-    if (p.inCar) {
-      this.entities.exitCar();
-    } else {
-      const ok = this.entities.enterCar({ heat: this.heat });
-      if (ok) this.garage.applyTo(this.entities.playerCar);
-    }
-  }
-
-  _shoot() {
-    if (this.garage.open) return;
-    const p = this.entities.player;
-    const res = this.weapons.shoot();
-    if (!res || !res.ok) return;
-    this.visuals.flashMuzzle(p.x, p.z, p.heading);
-    if (this.renderer && typeof this.renderer.flashMuzzle === 'function') {
-      this.renderer.flashMuzzle(p.x, p.z, p.heading);
-    }
-    if (res.hitRivalCar && this.rivals) {
-      this.rivals.recountStopped();
-    }
-  }
-
-  // ---- update (hanya saat stateName 'play' & tidak frozen) ----
-  _update(dt) {
-    const p = this.entities.player;
-    const car = this.entities.playerCar;
-
-    this.dialog.update(dt);
-    if (this.radio && typeof this.radio.update === 'function') this.radio.update();
-    if (this._bustedCooldown > 0) this._bustedCooldown -= dt;
-
-    // Entitas + rival.
-    this.entities.update(dt, this.input, {
-      heat: this.heat,
-      audio: this.audio,
-      rivals: this.rivals,
-      onHitPed: () => {},
-      onCrash: (c) => {
-        this.visuals.sparks(c.x, c.z, 6);
-        this.visuals.smoke(c.x, c.z, 2);
-      },
-      onBusted: () => { this._bustedPending = true; },
-    });
-    if (this.rivals && typeof this.rivals.update === 'function') {
-      this.rivals.update(dt, p, {
-        damagePlayer: (n) => this.entities.damagePlayer(n),
-      });
-    }
-    if (this.visuals && typeof this.visuals.update === 'function') {
-      this.visuals.update(dt);
-    }
-
-    // Heat: reda 2.2/dtk, 7/dtk di hideout, tidak reda bila dekat polisi.
-    const hideout = this.spawns.hideout;
-    const inHideout = dist2d(p.x, p.z, hideout.x, hideout.z) < 12;
-    const nearCop = this.entities.nearestCopDist() < 25;
-    this.heat.update(dt, { hidden: inHideout, nearCop });
-
-    // Polisi mengikuti bintang wanted (maks 4 cruiser) + heli + roadblock.
-    const stars = this.heat.stars;
-    const wanted = Math.min(4, stars);
-    if (wanted === 0) {
-      if (this.entities.police.length > 0) this.entities.clearPolice();
-    } else {
-      if (this.entities.police.length < wanted) this.entities.spawnPolice(wanted);
-      if (this.entities.police.length > wanted) this.entities.police.length = wanted;
-    }
-    this.entities.heli.visible = this.heat.hasHeli();
-    if (this.heat.hasRoadblock() && this.entities.roadblocks.length === 0) {
-      const fx = Math.sin(p.heading);
-      const fz = Math.cos(p.heading);
-      this.entities.spawnRoadblock(
-        clamp(p.x + fx * 40, -230, 230),
-        clamp(p.z + fz * 40, -230, 230),
-      );
-    }
-
-    // Misi.
-    if (this.missions.active) {
-      const ev = this.missions.update(dt, p, this.spawns, { wantedStars: stars });
-      if (ev === 'completed') {
-        this._save();
-        if (this.missions.completed >= 10) {
-          this.showToast('NEON LEGEND! Semua 10 job selesai!');
-        } else {
-          this.showToast('Job selesai! +$' + (this.missions.defs[this.missions.completed - 1] || {}).payout);
+    this.safeCall("camera", () => {
+      if (typeof THREE !== "undefined") {
+        this.camera = new THREE.PerspectiveCamera(
+          CONFIG.CAMERA_FOV,
+          CONFIG.CANVAS_WIDTH / CONFIG.CANVAS_HEIGHT,
+          CONFIG.CAMERA_NEAR,
+          CONFIG.CAMERA_FAR
+        );
+        this.camera.position.set(0, 42, 90);
+        this.camera.lookAt(0, 6, -40);
+        if (this.world && this.world.scene) {
+          const sky = this.visuals ? this.visuals.makeSunsetSky() : null;
+          if (sky && this.world.scene.add) this.world.scene.add(sky);
         }
-      } else if (ev === 'failed') {
-        this._save();
       }
+    });
+    this.safeCall("entities", () => {
+      if (this.entities) {
+        this.entities.spawnTraffic(4, "STRIP");
+        this.entities.spawnPeds(5, "STRIP");
+      }
+    });
+    this.safeCall("player", () => this.initPlayer());
+    this.safeCall("dressing", () => {
+      if (this.dressing) this.dressing.dress("STRIP");
+    });
+    this.safeCall("hud", () => this.initHUD());
+    this.safeCall("minimap", () => this.initMinimap());
+    this.safeCall("beacon", () => {
+      if (this.beacon) this.beacon.setTarget(0, -200, "NEON HUNT");
+    });
+    this.safeCall("shot-preset", () => this.applyShotFromURL());
+    // Title hanya tampil bila TIDAK ada ?shot= (mode shot: scene 3D langsung terlihat).
+    this.safeCall("title", () => this.showTitle(!this.shotMode));
+    this.booted = true;
+    if (typeof window !== "undefined") window.__game = this;
+    // Pasang loop (hanya bila requestAnimationFrame tersedia).
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame((t) => this.loop(t));
     }
+    return this.bootErrors.length === 0;
+  }
 
-    // Beacon misi (pink; cyan untuk chain pickup).
-    if (this.missions.active) {
-      const target = this.missions.beaconTarget(this.spawns, p);
-      if (target) {
-        const stage = this.missions.currentStage();
-        if (stage && stage.type === 'chain') this.beacon.setCyan();
-        else this.beacon.setPink();
-        this.beacon.set(target.x, target.z, true);
-      } else {
-        this.beacon.hide();
-      }
+  // ?shot=cover|street|avenue|mission di URL -> preset shot.
+  // Sesudah preset: ganti mesh pemain (sedan/ped), refresh HUD + label minimap,
+  // lalu BEKUKAN update agar screenshot deterministik (scene statis, tanpa
+  // gerakan berbasis waktu dari traffic/heli/beacon).
+  applyShotFromURL() {
+    if (typeof window === "undefined" || !window.location) return null;
+    const params = new URLSearchParams(window.location.search);
+    const shot = params.get("shot");
+    if (!shot || !this.shots) return null;
+    const result = this.shots.applyShotPreset(this, shot);
+    if (typeof result === "string" && result.indexOf("unknown shot id") === 0) return null;
+    this.shotMode = true;
+    this.syncPlayerMesh(shot);
+    const districts = { cover: "STRIP", street: "DOWNTOWN", avenue: "ARCADE", mission: "BEACH" };
+    if (typeof document !== "undefined" && districts[shot]) {
+      const label = document.getElementById("hud-minimap-label");
+      if (label) label.textContent = districts[shot];
+    }
+    // HUD speed ikut kecepatan cruise pemain (shot 3: 12 MPH, shot 1: 24 MPH).
+    if (this.player && typeof this.player.speed === "number") this.speed = this.player.speed;
+    // Shot 4: rifle terlihat di tangan pemain.
+    if (shot === "mission" && this.weapons && this.weapons.mesh && this.player && this.player.mesh) {
+      const rifle = this.weapons.mesh;
+      rifle.position.set(0.35, 1.15, 0.2);
+      rifle.rotation.set(0, 0, 0);
+      this.player.mesh.add(rifle);
+    }
+    this.updateHUD();
+    this.frozen = true;
+    return result;
+  }
+
+  // Objek pemain: handle publik untuk shots.js (placePlayer/setCruiseSpeed).
+  // Dibuat sekali di boot (mesh sedan default); model diganti per shot.
+  initPlayer() {
+    this.player = {
+      mesh: null,
+      position: null,
+      model: "",
+      x: 0,
+      z: 0,
+      heading: 0,
+      speed: 0,
+      setPosition: function (x, z) {
+        this.x = x;
+        this.z = z;
+        if (this.mesh) this.mesh.position.set(x, this.mesh.position.y, z);
+      },
+      setHeading: function (h) {
+        this.heading = h;
+        if (this.mesh) this.mesh.rotation.y = h;
+      },
+      setSpeed: function (s) { this.speed = s; },
+    };
+    this.playerPos = this.player;
+    this.setPlayerMesh(this.garage ? this.garage.makeVehicleMesh("sedan") : null, "sedan");
+  }
+
+  // Ganti mesh pemain (sedan/ped) dengan posisi + heading dipertahankan.
+  setPlayerMesh(mesh, model) {
+    if (!this.player) return;
+    const scene = this.world && this.world.scene;
+    if (this.player.mesh && scene && scene.remove) scene.remove(this.player.mesh);
+    this.player.mesh = mesh || null;
+    this.player.model = model || "";
+    if (mesh) {
+      this.player.position = mesh.position;
+      mesh.position.set(this.player.x, mesh.position.y || 0, this.player.z);
+      mesh.rotation.y = this.player.heading;
+      if (scene && scene.add) scene.add(mesh);
     } else {
-      this.beacon.hide();
-    }
-
-    // Api mobil rival yang baru dihentikan (misi 9, §17.4).
-    const stopped = this.rivals ? this.rivals.stoppedCount : 0;
-    if (stopped > this._prevStopped && this.rivals) {
-      for (const c of this.rivals.getawayCars) {
-        if (c.stopped) this.visuals.rivalFire(c.x, c.z);
-      }
-      if (stopped >= 4) this.showToast('Semua mobil rival dihentikan! Balik ke garage.');
-    }
-    this._prevStopped = stopped;
-
-    // Asap knalpot saat akselerasi (ringan).
-    if (p.inCar && car && this.input.forward > 0 && Math.abs(car.speed) > 5) {
-      this._exhaustTimer -= dt;
-      if (this._exhaustTimer <= 0) {
-        this.visuals.exhaust(car.x, car.z, car.heading);
-        this._exhaustTimer = 0.18;
-      }
-    }
-
-    // Engine hum mengikuti kecepatan.
-    if (this.audio && typeof this.audio.engine === 'function') {
-      const norm = p.inCar && car ? clamp(Math.abs(car.speed) / 48, 0, 1) : 0;
-      this.audio.engine(norm, p.inCar);
-    }
-
-    // Kecepatan (km/j) dari perpindahan nyata — akurat jalan kaki & nyetir.
-    const moved = dist2d(this._prevX, this._prevZ, p.x, p.z);
-    this._speedKmh = dt > 0 ? (moved / dt) * 3.6 : 0;
-    this._prevX = p.x;
-    this._prevZ = p.z;
-    if (p.inCar && car) this.state.score += Math.round(moved);
-
-    // Wasted (HP 0) & busted (polisi menangkap).
-    if (p.hp <= 0) {
-      this._onWasted();
-      return;
-    }
-    if (this._bustedPending) {
-      this._bustedPending = false;
-      if (this._bustedCooldown <= 0 && stars > 0) this._onBusted();
+      this.player.position = null;
     }
   }
 
-  _onWasted() {
-    const fine = (CONFIG && CONFIG.wastedFine) || 200;
-    this.state.money = Math.max(0, this.state.money - fine);
-    this.stateName = 'wasted';
-    const wt = el('wasted-text');
-    if (wt) wt.textContent = 'Kamu tumbang. Denda $' + fine + ' — respawn di garage.';
-    if (this.audio && typeof this.audio.missionFail === 'function') {
-      try { this.audio.missionFail(); } catch (e) { /* abaikan */ }
-    }
-    this._save();
+  // Mesh pemain per shot: sedan untuk cover/avenue, pejalan kaki untuk street/mission.
+  syncPlayerMesh(shot) {
+    if (!this.player) return;
+    const model = (shot === "street" || shot === "mission") ? "ped" : "sedan";
+    if (this.player.model === model) return;
+    const mesh = model === "ped"
+      ? (this.entities ? this.entities.makePedMesh() : null)
+      : (this.garage ? this.garage.makeVehicleMesh("sedan") : null);
+    if (mesh) this.setPlayerMesh(mesh, model);
   }
 
-  _respawnAfterWasted() {
-    const g = this.spawns.garage;
-    this.entities.respawnPlayerAt(g.x, g.z);
-    this.entities.player.hp = (CONFIG && CONFIG.playerHpMax) || 100;
-    this.entities.playerCar.condition = this.entities.playerCar.model === 'bike' ? 60 : 100;
-    this.heat.clear();
-    this.entities.clearPolice();
-    if (this.missions.active) {
-      // Misi yang sedang jalan dibatalkan saat wasted — coba lagi di garage.
-      this.missions._fail('Kamu tumbang di tengah job. Coba lagi di garage.');
-    }
-    this.stateName = 'play';
-    this._prevX = this.entities.player.x;
-    this._prevZ = this.entities.player.z;
+  // ENTER memulai game dari title screen.
+  start() {
+    this.frozen = false;
+    this.showTitle(false);
+    if (this.dialog) this.dialog.hide();
+    if (this.radio) this.radio.play("NEON FM");
   }
 
-  _onBusted() {
-    const fine = (CONFIG && CONFIG.bustedFine) || 250;
-    this.state.money = Math.max(0, this.state.money - fine);
-    this._bustedCooldown = 3;
-    const g = this.spawns.garage;
-    this.entities.respawnPlayerAt(g.x, g.z);
-    this.heat.clear();
-    this.entities.clearPolice();
-    this.dialog.show('NBPD', 'BUSTED! Kamu ditangkap NBPD. Denda $' + fine + ' — respawn di garage.', 5);
-    this._save();
+  showTitle(visible) {
+    if (typeof document === "undefined") return;
+    const title = document.getElementById("hud-title");
+    if (title) title.style.display = visible ? "flex" : "none";
   }
 
-  // ---- render ----
-  _renderFrame(dt, snap) {
-    if (!this.renderer || !this.entities) return;
-    const p = this.entities.player;
-    const car = this.entities.playerCar;
-    this.renderer.setChaseCamera(
-      p.x, p.z, p.heading,
-      p.inCar ? 'car' : 'foot',
-      snap === true,
-    );
-    this.renderer.syncEntities(this._syncList());
-    this.renderer.setBeacon(
-      this.beacon.x, this.beacon.z, this.beacon.visible,
-      this.beacon.color === '#22d3ee' ? 'cyan' : 'pink',
-    );
-    const heli = this.entities.heli;
-    this.renderer.setHeli(heli.x, heli.z, heli.visible, heli.alt);
-    const blips = [];
-    if (this.beacon.visible) blips.push({ x: this.beacon.x, z: this.beacon.z, kind: 'beacon' });
-    for (const c of this.entities.police) blips.push({ x: c.x, z: c.z, kind: 'police' });
-    if (this.rivals) {
-      for (const r of this.rivals.list) {
-        if (r.alive !== false) blips.push({ x: r.x, z: r.z, kind: 'rival' });
-      }
-    }
-    this.renderer.updateMinimap(p.x, p.z, p.heading, blips);
-    this.renderer.render(dt);
+  initHUD() {
+    if (typeof document === "undefined") return;
+    // id HUD di index.html ada di kotak pembungkus — targetkan .hud-value di
+    // dalamnya (set textContent pada pembungkus akan menghapus label + nilai).
+    const val = (id) => {
+      const box = document.getElementById(id);
+      if (!box) return null;
+      return box.querySelector(".hud-value") || box;
+    };
+    this.hud = {
+      speed: val("hud-speed"),
+      fare: val("hud-fare"),
+      wanted: val("hud-wanted"),
+      money: val("hud-money"),
+      job: document.getElementById("hud-job-active"),
+      banner: document.getElementById("hud-banner"),
+      pill: document.getElementById("hud-pill"),
+      hint: document.getElementById("hud-hint"),
+    };
+    this.updateHUD();
   }
 
-  // Daftar entity untuk renderer. Catatan integrasi: entities/rivals memakai
-  // `alt` untuk data (hp/condition/speed), sedangkan render.js memakai
-  // `alt` sebagai posisi Y — tanpa normalisasi, pemain/mobil akan melayang
-  // setinggi hp/condition (100 m). Jadi alt dinolkan, kecuali heli (alt =
-  // ketinggian terbang yang benar). Pemain jalan kaki disembunyikan saat
-  // di dalam mobil (mesh mobil/motor sudah termasuk pengendara).
-  _syncList() {
-    const list = this.entities.toSyncList();
-    if (this.rivals && typeof this.rivals.toSyncList === 'function') {
-      list.push.apply(list, this.rivals.toSyncList());
-    }
-    const inCar = this.entities.player.inCar;
-    const out = [];
-    for (let i = 0; i < list.length; i++) {
-      const e = list[i];
-      if (e.kind === 'player' && inCar) continue;
-      if (e.kind === 'heli') { out.push(e); continue; }
-      out.push(e.alt ? { kind: e.kind, x: e.x, z: e.z, heading: e.heading, color: e.color, model: e.model, alt: 0, scale: e.scale, isRivalCar: e.isRivalCar, condition: e.condition } : e);
-    }
-    return out;
+  initMinimap() {
+    if (typeof document === "undefined") return;
+    const canvas = document.getElementById("hud-minimap");
+    this.minimap = canvas || null;
+    this.minimapCtx = canvas ? canvas.getContext("2d") : null;
   }
 
-  // ---- HUD ----
-  _hud(id) {
-    let node = this._hudCache.get(id);
-    if (!node) {
-      node = el(id);
-      if (node) this._hudCache.set(id, node);
+  updateHUD() {
+    if (!this.hud) return;
+    const setText = (el, text) => {
+      if (el) el.textContent = text;
+    };
+    setText(this.hud.speed, Math.round(this.speed) + " MPH");
+    setText(this.hud.money, "$" + this.money);
+    setText(this.hud.wanted, "★".repeat(this.heat ? this.heat.wanted() : 0));
+    const active = this.missions ? this.missions.active() : null;
+    setText(this.hud.job, active ? "JOB " + active.id + " " + active.name : "JOB —");
+    if (this.hud.fare) {
+      setText(this.hud.fare, active && active.reward ? "$" + active.reward : "$0");
     }
-    return node;
+    this.drawMinimap();
   }
 
-  _setText(id, text) {
-    const node = this._hud(id);
-    if (node && node.textContent !== text) node.textContent = text;
+  // Minimap 240px: blok distrik + label + posisi pemain + beacon.
+  drawMinimap() {
+    if (!this.minimapCtx || !this.world) return;
+    const size = CONFIG.MINIMAP_SIZE;
+    const ctx = this.minimapCtx;
+    const half = CONFIG.CITY_HALF;
+    const scale = size / (half * 2);
+    const toMap = (x, z) => [(x + half) * scale, (z + half) * scale];
+    ctx.fillStyle = "#0a0a18";
+    ctx.fillRect(0, 0, size, size);
+    const colors = { STRIP: "#ff2e88", DOWNTOWN: "#7a6cff", ARCADE: "#00e5ff", BEACH: "#ffd400" };
+    for (const name of CONFIG.DISTRICTS) {
+      const d = this.world.districts[name];
+      if (!d) continue;
+      const [x0, y0] = toMap(d.bounds.minX, d.bounds.minZ);
+      const [x1, y1] = toMap(d.bounds.maxX, d.bounds.maxZ);
+      ctx.fillStyle = colors[name];
+      ctx.globalAlpha = 0.35;
+      ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "bold 11px monospace";
+      ctx.fillText(name, x0 + 4, y0 + 14);
+    }
+    // Posisi pemain (ikut game.player bila ada).
+    const [px, py] = toMap(this.player ? this.player.x : 0, this.player ? this.player.z : 0);
+    ctx.fillStyle = "#ffffff";
+    ctx.beginPath();
+    ctx.arc(px, py, 4, 0, Math.PI * 2);
+    ctx.fill();
   }
 
-  _updateHUD() {
-    if (typeof document === 'undefined' || !this.entities) return;
-    const p = this.entities.player;
-    const car = this.entities.playerCar;
-    this._setText('hud-money', '$' + this.state.money);
-    this._setText('hud-score', 'SKOR ' + this.state.score);
-    this._setText('hud-jobs', 'JOB ' + this.missions.completed + '/10 SELESAI');
-    // Wanted: 5 bintang ★, nyala/mati.
-    const stars = this.heat ? this.heat.stars : 0;
-    const wantedEl = this._hud('hud-wanted');
-    if (wantedEl) {
-      let html = '';
-      for (let i = 0; i < 5; i++) {
-        html += '<span' + (i < stars ? '' : ' class="star-off"') + '>★</span>';
-      }
-      if (wantedEl.innerHTML !== html) wantedEl.innerHTML = html;
+  // Satu frame: dt clamp maks 0.2; frozen menghentikan update (render jalan).
+  loop(t) {
+    const now = typeof t === "number" ? t : 0;
+    let dt = (now - this.lastTime) / 1000;
+    this.lastTime = now;
+    if (!Number.isFinite(dt) || dt < 0) dt = 0;
+    if (dt > CONFIG.MAX_DT) dt = CONFIG.MAX_DT;
+    if (!this.frozen) this.update(dt);
+    this.renderFrame();
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame((ts) => this.loop(ts));
     }
-    this._setText('hud-radio', this.radio ? this.radio.currentName() : 'NEON 99.1');
-    const ammo = this.weapons ? this.weapons.ammoLeft() : '∞';
-    this._setText('hud-weapon', (this.weapons ? this.weapons.displayName : 'Pistol') + ' — ' + ammo);
-    let condPct = 100;
-    if (car) {
-      const max = car.model === 'bike' ? 60 : (car.model === 'truck' ? 120 : 100);
-      condPct = Math.max(0, Math.round(((car.condition == null ? 100 : car.condition) / max) * 100));
-    }
-    this._setText('hud-condition', 'KONDISI ' + condPct + '%');
-    this._setText('hud-respect', (this.respect ? this.respect.rank : 'Rookie') + ' — ' + (this.respect ? this.respect.points : 0));
-    const speedEl = this._hud('hud-speed');
-    if (speedEl) {
-      const html = Math.round(this._speedKmh) + ' <small>km/j</small>';
-      if (speedEl.innerHTML !== html) speedEl.innerHTML = html;
-    }
-    // Misi.
-    if (this.missions.active) {
-      this._setText('hud-mission', 'JOB ' + this.missions.active.id + ' — ' + this.missions.active.name);
-      this._setText('hud-mission-sub', this.missions.objectiveText());
-    } else if (this.missions.completed >= 10) {
-      this._setText('hud-mission', 'NEON LEGEND — FREE ROAM');
-      this._setText('hud-mission-sub', 'Semua 10 job selesai. Kota ini milikmu.');
-    } else {
-      this._setText('hud-mission', 'NEON BAY');
-      this._setText('hud-mission-sub', 'Pergi ke garage dan tekan ENTER untuk mulai job berikutnya.');
-    }
-    // Uang di panel garasi.
-    if (this.garage.open) {
-      this._setText('garage-money', 'Uang: $' + this.state.money);
-    }
-    void p;
   }
 
-  _syncScreens() {
-    const title = el('title-screen');
-    if (title) title.hidden = this.stateName !== 'title';
-    const pause = el('pause-screen');
-    if (pause) pause.hidden = this.stateName !== 'pause';
-    const wasted = el('wasted-screen');
-    if (wasted) wasted.hidden = this.stateName !== 'wasted';
+  update(dt) {
+    if (this.input) {
+      this.input.update();
+      if (this.input.pressed("Enter") && this.frozen) this.start();
+    }
+    if (this.entities) this.entities.update(dt);
+    if (this.heat) this.heat.update(dt);
+    if (this.beacon) this.beacon.update(dt);
+    if (this.audio) this.audio.engine(this.speed);
+    this.updateHUD();
   }
 
-  showToast(text, seconds) {
-    const toast = el('hud-toast');
-    if (!toast) return;
-    toast.textContent = text;
-    toast.style.display = 'block';
-    if (this._toastTimer) clearTimeout(this._toastTimer);
-    this._toastTimer = setTimeout(() => {
-      toast.style.display = 'none';
-    }, Math.max(1, seconds || 3) * 1000);
-  }
-
-  // ---- save / load ----
-  _save() {
-    try {
-      if (typeof localStorage === 'undefined') return;
-      localStorage.setItem(SAVE_KEY, JSON.stringify({
-        money: this.state.money,
-        jobsDone: this.missions.completed,
-        respect: this.respect.points,
-        score: this.state.score,
-        engineLevel: this.garage.engineLevel,
-        paintIndex: this.garage.paintIndex,
-        vehicle: this.garage.vehicle,
-      }));
-    } catch (e) { /* storage tidak tersedia — abaikan */ }
-  }
-
-  _load() {
-    try {
-      if (typeof localStorage === 'undefined') return;
-      const raw = localStorage.getItem(SAVE_KEY);
-      if (!raw || raw.length <= 10) return;
-      const data = JSON.parse(raw);
-      if (typeof data.money === 'number') this.state.money = data.money;
-      if (typeof data.score === 'number') this.state.score = data.score;
-      if (typeof data.respect === 'number') this.respect.set(data.respect);
-      if (typeof data.jobsDone === 'number') {
-        this.missions.completed = Math.max(0, Math.min(10, Math.floor(data.jobsDone)));
-        this.state.jobsDone = this.missions.completed;
-      }
-      if (typeof data.engineLevel === 'number') {
-        this.garage.engineLevel = Math.max(0, Math.min(3, Math.floor(data.engineLevel)));
-      }
-      if (typeof data.paintIndex === 'number') {
-        this.garage.paintIndex = data.paintIndex;
-      }
-      if (typeof data.vehicle === 'string' && this.entities.playerCar) {
-        this.garage.selectVehicle(data.vehicle, this.entities.playerCar);
-      }
-      this.garage.applyTo(this.entities.playerCar);
-    } catch (e) { /* save korup — mulai baru */ }
+  renderFrame() {
+    if (!this.renderer || !this.world || !this.world.scene || !this.camera) return;
+    this.renderer.render(this.world.scene, this.camera);
   }
 }
 
 // Boot otomatis saat modul dimuat (index.html memuat sebagai module).
-if (typeof window !== 'undefined') {
-  const game = new Game();
+// "game" adalah id canvas di index.html (Renderer me-resolve string id).
+if (typeof window !== "undefined") {
+  const game = new Game("game");
   game.boot();
 }
