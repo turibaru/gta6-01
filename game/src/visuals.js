@@ -1,125 +1,171 @@
-// visuals.js — Efek partikel & kilat — GTA 6 R7
-// Spec §5 + §17.4/§17.7c. muzzle flash, jejak asap/percik tabrakan,
-// lampu rem, asap knalpot + partikel api mobil rival yang dihentikan
-// (emissive oranye + asap). Pool partikel MAKSIMAL 40 sprite —
-// spawn baru saat pool penuh menggantikan partikel tertua.
+// NEON BAY: SUNSET RUN — Visuals (R12 rebuild, from design spec section 9).
+// Sunset sky, grouped window strips, neon signs (R12 emissive 2.2 + glow).
+// NOTE: no pink-named setter method exists here by design (R8 bug — never add one).
 
-export const MAX_PARTICLES = 40;
+import { CONFIG, mulberry32 } from "./config.js";
 
 export class Visuals {
   constructor() {
-    this.particles = []; // {x,y,z,vx,vy,vz,life,maxLife,color,size,kind}
-    this.muzzleFlashes = []; // {x,z,heading,life} — dibaca render.js
-    this.brakeLights = false;
+    this.neonEmissive = CONFIG.NEON_EMISSIVE_INTENSITY;
   }
 
-  _push(p) {
-    if (this.particles.length >= MAX_PARTICLES) this.particles.shift();
-    this.particles.push(p);
-    return p;
+  // Gradient sunset sky dome (orange horizon -> purple zenith).
+  makeSunsetSky() {
+    const group = new THREE.Group();
+    group.name = "sunset-sky";
+    if (typeof document !== "undefined") {
+      const c = document.createElement("canvas");
+      c.width = 64;
+      c.height = 512;
+      const ctx = c.getContext("2d");
+      const g = ctx.createLinearGradient(0, 0, 0, 512);
+      g.addColorStop(0, "#3b2a6b");
+      g.addColorStop(0.45, "#c94b7c");
+      g.addColorStop(0.8, "#ff7a3c");
+      g.addColorStop(1, "#ffd9a0");
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 64, 512);
+      const tex = new THREE.CanvasTexture(c);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      const sky = new THREE.Mesh(
+        new THREE.SphereGeometry(420, 24, 16),
+        new THREE.MeshBasicMaterial({ map: tex, side: THREE.BackSide, fog: false })
+      );
+      group.add(sky);
+    } else {
+      const sky = new THREE.Mesh(
+        new THREE.SphereGeometry(420, 24, 16),
+        new THREE.MeshBasicMaterial({ color: 0xc94b7c, side: THREE.BackSide, fog: false })
+      );
+      group.add(sky);
+    }
+    // Low sun disc on the horizon.
+    const sunDisc = new THREE.Mesh(
+      new THREE.CircleGeometry(22, 32),
+      new THREE.MeshBasicMaterial({ color: 0xffd9a0, fog: false })
+    );
+    sunDisc.position.set(-140, 26, -380);
+    sunDisc.lookAt(0, 26, 0);
+    group.add(sunDisc);
+    return group;
   }
 
-  spawn(p) {
-    return this._push({
-      x: p.x || 0, y: p.y == null ? 0.5 : p.y, z: p.z || 0,
-      vx: p.vx || 0, vy: p.vy || 0, vz: p.vz || 0,
-      life: p.life || 0.6, maxLife: p.life || 0.6,
-      color: p.color || '#ffffff', size: p.size || 0.5,
-      kind: p.kind || 'spark',
+  // Grouped window light strips for a building face.
+  // Returns a THREE.Group of warm emissive strips, clustered in bands
+  // (not random dots), deterministic from the world seed.
+  makeWindowStrips(width = 10, height = 30, floors = 6) {
+    const group = new THREE.Group();
+    group.name = "window-strips";
+    const rng = mulberry32(CONFIG.WORLD_SEED + width * 7 + height * 13);
+    const stripMat = new THREE.MeshBasicMaterial({ color: 0xffd27a });
+    const stripMatDim = new THREE.MeshBasicMaterial({ color: 0xff9a4d });
+    const cols = Math.max(2, Math.floor(width / 3));
+    const rows = Math.max(2, floors);
+    for (let r = 0; r < rows; r++) {
+      // Whole bands lit together: grouped strips, per spec.
+      if (rng() < 0.25) continue;
+      const y = -height / 2 + (r + 0.5) * (height / rows);
+      const lit = rng() < 0.7 ? stripMat : stripMatDim;
+      for (let col = 0; col < cols; col++) {
+        if (rng() < 0.3) continue;
+        const w = (width / cols) * 0.62;
+        const strip = new THREE.Mesh(new THREE.PlaneGeometry(w, 0.9), lit);
+        strip.position.set(
+          -width / 2 + (col + 0.5) * (width / cols),
+          y,
+          0.06
+        );
+        group.add(strip);
+      }
+    }
+    return group;
+  }
+
+  // Neon sign board with text, always-bright basic material + emissive
+  // standard backing at 2.2 (R12 boost) + radial glow sprite behind it.
+  makeNeonSign(text, color = CONFIG.COLORS.PINK) {
+    const group = new THREE.Group();
+    group.name = "neon-sign-" + String(text).slice(0, 12);
+    const hex = typeof color === "number" ? color : CONFIG.COLORS.PINK;
+
+    // Backing plate: standard material, emissive same color, intensity 2.2.
+    const plate = new THREE.Mesh(
+      new THREE.BoxGeometry(7, 1.8, 0.18),
+      new THREE.MeshStandardMaterial({
+        color: 0x111111,
+        emissive: hex,
+        emissiveIntensity: this.neonEmissive,
+      })
+    );
+    group.add(plate);
+
+    // Text face: bright basic material (always lit), canvas texture.
+    const face = new THREE.Mesh(
+      new THREE.PlaneGeometry(6.8, 1.6),
+      new THREE.MeshBasicMaterial({ color: hex, transparent: true, opacity: 0.95 })
+    );
+    face.position.z = 0.12;
+    if (typeof document !== "undefined") {
+      const c = document.createElement("canvas");
+      c.width = 512;
+      c.height = 128;
+      const ctx = c.getContext("2d");
+      ctx.clearRect(0, 0, 512, 128);
+      ctx.font = "bold 64px monospace, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.shadowColor = "#" + hex.toString(16).padStart(6, "0");
+      ctx.shadowBlur = 24;
+      ctx.fillStyle = "#ffffff";
+      ctx.fillText(String(text).toUpperCase(), 256, 66);
+      const tex = new THREE.CanvasTexture(c);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      face.material = new THREE.MeshBasicMaterial({ map: tex, transparent: true });
+    }
+    group.add(face);
+
+    // Glow sprite behind the board: radial circle, opacity 0.35, 2x scale.
+    const glow = this._glowSprite(hex);
+    glow.position.z = -0.25;
+    glow.scale.set(14, 3.6, 1);
+    group.add(glow);
+
+    group.userData.text = text;
+    group.userData.color = hex;
+    return group;
+  }
+
+  // Radial transparent glow circle (used as bloom behind neon boards).
+  _glowSprite(hex) {
+    const mat = new THREE.SpriteMaterial({
+      color: hex,
+      transparent: true,
+      opacity: CONFIG.NEON_GLOW_OPACITY,
+      depthWrite: false,
     });
-  }
-
-  // Kilat moncong senjata di posisi + heading penembak.
-  flashMuzzle(x, z, heading = 0) {
-    this.muzzleFlashes.push({ x, z, heading, life: 0.08 });
-    for (let i = 0; i < 3; i++) {
-      this.spawn({
-        x: x + Math.sin(heading) * 1.2, y: 1.1, z: z + Math.cos(heading) * 1.2,
-        vx: (Math.random() - 0.5) * 4, vy: Math.random() * 2, vz: (Math.random() - 0.5) * 4,
-        life: 0.12, color: '#ffd166', size: 0.6, kind: 'flash',
-      });
+    if (typeof document !== "undefined") {
+      const c = document.createElement("canvas");
+      c.width = 128;
+      c.height = 128;
+      const ctx = c.getContext("2d");
+      const g = ctx.createRadialGradient(64, 64, 4, 64, 64, 62);
+      g.addColorStop(0, "rgba(255,255,255,0.9)");
+      g.addColorStop(0.5, "rgba(255,255,255,0.35)");
+      g.addColorStop(1, "rgba(255,255,255,0)");
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 128, 128);
+      mat.map = new THREE.CanvasTexture(c);
     }
-    return this.muzzleFlashes[this.muzzleFlashes.length - 1];
+    const sprite = new THREE.Sprite(mat);
+    sprite.scale.set(CONFIG.NEON_GLOW_SCALE, CONFIG.NEON_GLOW_SCALE, 1);
+    return sprite;
   }
 
-  // Percik kuning saat tabrakan (damageCar/damagePlayer).
-  sparks(x, z, n = 6) {
-    for (let i = 0; i < n; i++) {
-      const a = Math.random() * Math.PI * 2;
-      const s = 2 + Math.random() * 5;
-      this.spawn({
-        x, y: 0.8, z,
-        vx: Math.sin(a) * s, vy: 1 + Math.random() * 3, vz: Math.cos(a) * s,
-        life: 0.4 + Math.random() * 0.3, color: '#facc15', size: 0.4, kind: 'spark',
-      });
-    }
-    return this;
-  }
-
-  // Asap abu-abu (tabrakan / knalpot).
-  smoke(x, z, n = 3, color = '#9ca3af') {
-    for (let i = 0; i < n; i++) {
-      this.spawn({
-        x: x + (Math.random() - 0.5), y: 0.6, z: z + (Math.random() - 0.5),
-        vx: (Math.random() - 0.5) * 0.5, vy: 0.8 + Math.random() * 0.8, vz: (Math.random() - 0.5) * 0.5,
-        life: 0.9 + Math.random() * 0.6, color, size: 0.8, kind: 'smoke',
-      });
-    }
-    return this;
-  }
-
-  // Asap knalpot saat akselerasi (ringan: 1 sprite per panggilan).
-  exhaust(x, z, heading) {
-    const bx = x - Math.sin(heading) * 2.2;
-    const bz = z - Math.cos(heading) * 2.2;
-    return this.spawn({
-      x: bx, y: 0.4, z: bz,
-      vx: -Math.sin(heading) * 1.5, vy: 0.5, vz: -Math.cos(heading) * 1.5,
-      life: 0.7, color: '#6b7280', size: 0.5, kind: 'smoke',
-    });
-  }
-
-  // Api mobil rival yang dihentikan (misi 9): emissive oranye + asap.
-  rivalFire(x, z) {
-    for (let i = 0; i < 4; i++) {
-      this.spawn({
-        x: x + (Math.random() - 0.5) * 1.5, y: 0.8 + Math.random() * 0.6, z: z + (Math.random() - 0.5) * 1.5,
-        vx: (Math.random() - 0.5), vy: 1.5 + Math.random(), vz: (Math.random() - 0.5),
-        life: 0.5 + Math.random() * 0.4, color: '#fb923c', size: 0.9, kind: 'fire',
-      });
-    }
-    this.spawn({ x, y: 1.6, z, vx: 0, vy: 1.2, vz: 0, life: 1.2, color: '#4b5563', size: 1.1, kind: 'smoke' });
-    return this;
-  }
-
-  setBrakeLights(on) {
-    this.brakeLights = !!on;
-    return this.brakeLights;
-  }
-
-  update(dt) {
-    for (let i = this.particles.length - 1; i >= 0; i--) {
-      const p = this.particles[i];
-      p.life -= dt;
-      if (p.life <= 0) { this.particles.splice(i, 1); continue; }
-      p.x += p.vx * dt;
-      p.y += p.vy * dt;
-      p.z += p.vz * dt;
-      p.vy -= p.kind === 'smoke' ? -0.2 * dt : 4 * dt;
-      if (p.y < 0.05) p.y = 0.05;
-    }
-    for (let i = this.muzzleFlashes.length - 1; i >= 0; i--) {
-      this.muzzleFlashes[i].life -= dt;
-      if (this.muzzleFlashes[i].life <= 0) this.muzzleFlashes.splice(i, 1);
-    }
-    return this.particles;
-  }
-
-  clear() {
-    this.particles = [];
-    this.muzzleFlashes = [];
-    return this;
+  // Beacon pulse: 0.6 * (0.85 + 0.15 * sin(t * 2)).
+  pulse(t) {
+    return 0.6 * (0.85 + 0.15 * Math.sin(t * 2));
   }
 }
+
 
 export default Visuals;

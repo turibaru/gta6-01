@@ -1,140 +1,80 @@
-// weapons.js — Senjata — GTA 6 R7
-// Spec §3 + §5 + §17.3. pistol/scatter/smg/fists + RIFLE (key 5, ammo 40,
-// dmg 60, rate 0.6, range 140, spread 0.004). shoot(): raycast kerucut ke
-// target terdekat dalam range; scatter 6 pellet; melee range 2.4.
-// Menembak (F/klik) naikkan heat +10 — KECUALI tembakan yang mengenai mobil
-// RIVAL di misi 9 (tidak menambah heat, §17.7b).
-
-export const WEAPON_DEFS = {
-  pistol: { key: 1, ammo: 120, dmg: 34, rate: 0.28, range: 90, spread: 0.012, color: '#ffd166' },
-  scatter: { key: 2, ammo: 24, dmg: 22, rate: 0.85, range: 38, spread: 0.09, pellets: 6, color: '#ff7b54' },
-  smg: { key: 3, ammo: 120, dmg: 16, rate: 0.09, range: 70, spread: 0.035, auto: true, color: '#7ee8fa' },
-  fists: { key: 4, ammo: Infinity, dmg: 25, rate: 0.45, range: 2.4, melee: true, color: '#e2e8f0' },
-  rifle: { key: 5, ammo: 40, dmg: 60, rate: 0.6, range: 140, spread: 0.004, color: '#facc15' },
-};
-export const WEAPON_ORDER = ['pistol', 'scatter', 'smg', 'fists', 'rifle'];
-export const WEAPON_NAMES = {
-  pistol: 'Pistol', scatter: 'Scattergun', smg: 'SMG', fists: 'Fists', rifle: 'Rifle',
-};
-
-function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+// game/src/weapons.js — Weapons: rifle + pistol, fire raycast sederhana.
+// Spec: r10-design-spec.md bagian 11 (Weapons). Rifle di shot 4 (pier).
+import { CONFIG, mulberry32 } from "./config.js";
 
 export class Weapons {
-  constructor(deps = {}) {
-    this.deps = deps; // { heat, audio, getOrigin, getTargets }
-    this.current = 'pistol';
-    this.ammo = {};
-    this._lastShot = 0;
-    this.refillAll();
+  constructor(scene) {
+    this.scene = scene || null;
+    this.current = "rifle";
+    this._rng = mulberry32((((CONFIG && CONFIG.WORLD_SEED) || 1337) + 77) >>> 0);
+    this._mag = { rifle: 30, pistol: 12 };
+    this._ammo = { rifle: 30, pistol: 12 };
+    this.model = null;
+    this._buildModel("rifle");
   }
 
-  refillAll() {
-    for (const name of WEAPON_ORDER) {
-      this.ammo[name] = WEAPON_DEFS[name].ammo;
-    }
-    return this.ammo;
-  }
-
-  select(name) {
-    if (WEAPON_DEFS[name]) this.current = name;
+  equip(name) {
+    if (name !== "rifle" && name !== "pistol") return this.current;
+    this.current = name;
+    this._buildModel(name);
     return this.current;
   }
 
-  selectByKey(key) {
-    for (const name of WEAPON_ORDER) {
-      if (WEAPON_DEFS[name].key === key) return this.select(name);
-    }
-    return this.current;
+  fire() {
+    if (this._ammo[this.current] <= 0) return { hit: false, ammo: 0, empty: true };
+    this._ammo[this.current] -= 1;
+    const p = this.current === "rifle" ? 0.6 : 0.5;
+    const hit = this._rng() < p;
+    return { hit: hit, ammo: this._ammo[this.current], empty: false };
   }
 
-  get def() { return WEAPON_DEFS[this.current]; }
-
-  get displayName() { return WEAPON_NAMES[this.current] || this.current; }
-
-  ammoLeft(name = this.current) {
-    const a = this.ammo[name];
-    return a === Infinity ? '∞' : a;
+  ammo() {
+    return this._ammo[this.current];
   }
 
-  canShoot(now = performance.now() / 1000) {
-    const def = this.def;
-    if (now - this._lastShot < def.rate) return false;
-    if (this.ammo[this.current] !== Infinity && this.ammo[this.current] <= 0) return false;
-    return true;
+  reload() {
+    this._ammo[this.current] = this._mag[this.current];
+    return this._ammo[this.current];
   }
 
-  // Target: { x, z, hp?, condition?, kind?, isRivalCar?, alive? }.
-  // opts: { origin {x,z,heading}, targets [], now, noHeat }.
-  // Bila opts kosong, pakai deps.getOrigin()/deps.getTargets() bila ada.
-  shoot(opts = {}) {
-    const now = opts.now != null ? opts.now : performance.now() / 1000;
-    if (!this.canShoot(now)) return { ok: false, reason: 'rate' };
-    const def = this.def;
-    const origin = opts.origin || (this.deps.getOrigin ? this.deps.getOrigin() : null);
-    if (!origin) return { ok: false, reason: 'no-origin' };
-    const targets = opts.targets || (this.deps.getTargets ? this.deps.getTargets() : []) || [];
-
-    this._lastShot = now;
-    if (this.ammo[this.current] !== Infinity) this.ammo[this.current]--;
-
-    const fx = Math.sin(origin.heading || 0);
-    const fz = Math.cos(origin.heading || 0);
-    const pellets = def.pellets || 1;
-    let hit = null;
-    let totalDamage = 0;
-
-    for (let p = 0; p < pellets; p++) {
-      // Raycast kerucut: target dalam range + sudut dalam spread*~3 + radius.
-      let best = null;
-      let bestDist = Infinity;
-      for (const t of targets) {
-        if (!t || t.alive === false) continue;
-        if (t.hp != null && t.hp <= 0) continue;
-        if (t.condition != null && t.condition <= 0) continue;
-        const dx = t.x - origin.x;
-        const dz = t.z - origin.z;
-        const dist = Math.hypot(dx, dz);
-        if (dist > def.range) continue;
-        if (dist < 0.001) { best = t; bestDist = 0; break; }
-        const dot = (dx * fx + dz * fz) / dist; // cos sudut ke target
-        const radius = t.radius != null ? t.radius : 1.2;
-        // Sudut yang diizinkan membesar dengan spread & radius target.
-        const cosAllowed = Math.cos(def.spread * 3 + Math.atan2(radius, dist));
-        if (dot < cosAllowed) continue;
-        if (dist < bestDist) { best = t; bestDist = dist; }
-      }
-      if (best) {
-        hit = best;
-        totalDamage += def.dmg;
-        if (best.hp != null) best.hp = Math.max(0, best.hp - def.dmg);
-        if (best.condition != null) best.condition = Math.max(0, best.condition - def.dmg);
-        if (best.alive !== undefined && best.hp != null && best.hp <= 0) best.alive = false;
-      }
-    }
-
-    // Heat +10, KECUALI tembakan mengenai mobil rival misi 9 (§17.7b).
-    const hitRivalCar = !!(hit && (hit.isRivalCar || hit.kind === 'getaway' || hit.kind === 'rival-car'));
-    if (!opts.noHeat && !hitRivalCar && this.deps.heat && typeof this.deps.heat.add === 'function') {
-      this.deps.heat.add(10);
-    }
-    if (this.deps.audio && typeof this.deps.audio.shoot === 'function') {
-      try { this.deps.audio.shoot(); } catch (e) { /* abaikan */ }
-    }
-    return {
-      ok: true,
-      weapon: this.current,
-      hit: hit || null,
-      hitRivalCar,
-      damage: totalDamage,
-      pellets,
-      ammoLeft: this.ammo[this.current],
-    };
+  attach(parent) {
+    if (this.model && parent && parent.add) parent.add(this.model);
+    return this.model;
   }
 
-  // Alias: tembak dari posisi pemain dengan heading tertentu.
-  shootFrom(x, z, heading, targets, opts = {}) {
-    return this.shoot({ ...opts, origin: { x, z, heading }, targets });
+  _buildModel(name) {
+    if (typeof THREE === "undefined") { this.model = null; return; }
+    if (this.model && this.model.parent) this.model.parent.remove(this.model);
+    const group = new THREE.Group();
+    const dark = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, metalness: 0.6, roughness: 0.4 });
+    const wood = new THREE.MeshStandardMaterial({ color: 0x6b4423, roughness: 0.8 });
+    if (name === "rifle") {
+      // Silinder panjang (laras) + bodi + popor — di tangan pemain on-foot (shot 4).
+      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 1.1, 10), dark);
+      barrel.rotation.x = Math.PI / 2;
+      barrel.position.set(0, 0, 0.7);
+      group.add(barrel);
+      const body = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.18, 0.7), dark);
+      body.position.set(0, 0, 0.1);
+      group.add(body);
+      const stock = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.22, 0.45), wood);
+      stock.position.set(0, -0.02, -0.4);
+      group.add(stock);
+      const grip = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.25, 0.12), wood);
+      grip.position.set(0, -0.18, -0.05);
+      group.add(grip);
+    } else {
+      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.35, 8), dark);
+      barrel.rotation.x = Math.PI / 2;
+      barrel.position.set(0, 0.05, 0.2);
+      group.add(barrel);
+      const body = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.14, 0.3), dark);
+      body.position.set(0, 0, 0);
+      group.add(body);
+      const grip = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.2, 0.1), wood);
+      grip.position.set(0, -0.14, -0.1);
+      group.add(grip);
+    }
+    this.model = group;
   }
 }
-
-export default Weapons;

@@ -1,321 +1,432 @@
-// shots.js — Screenshot preset — NEON BAY: SUNSET RUN (ronde 7, deepen)
-// Spec §9 + §17.5, restage B6 atas review DeepSeek (22 Nov ~11:20 WIB):
-// SHOT_PRESETS = ['cover','street','garage','mission'] — 'chase' dan 'drive'
-// lama dibuang. Tiap shot membuktikan kriteria BERBEDA; cover PALING PENTING:
-// LEBIH SEDIKIT, LEBIH BESAR, LEBIH TERBACA (tidak ada entity < ~40px di
-// frame 1280). Basis preset sama seperti R6; tiap preset MENEMPATKAN SECARA
-// DETERMINISTIK traffic + peds di dalam frustum kamera (10-70 m di depan
-// pemain); sisanya diparkir jauh supaya frame deterministik.
+// game/src/shots.js — Preset 4 screenshot "NEON BAY: SUNSET RUN" (gta6-01, ronde 12).
+// Compose MURNI dari r10-design-spec.md bagian 13/14 + r12-design-spec.md (delta shot 3).
+// Preset HANYA memanggil metode publik modul lain (tidak mengakses field privat).
+// File ini tidak memakai acak sama sekali.
+// Nilai R12 yang wajib: sport cyan lajur kiri (x=-6, z +14 -> -14, berlawanan arah),
+// mobil putih lajur kanan (x=+6, z=-16, pelan 4); jarak lateral >= 12, longitudinal >= 20.
 
-export const SHOT_PRESETS = ['cover', 'street', 'garage', 'mission'];
+const HINT_TEXT = "Pergi ke garage dan tekan ENTER...";
+const CRUISE_SPEED = 12;
 
-export function shotFromUrl() {
-  try {
-    if (typeof window === 'undefined' || !window.location) return null;
-    const params = new URLSearchParams(window.location.search);
-    const name = params.get('shot');
-    if (name && SHOT_PRESETS.indexOf(name) >= 0) return name;
-    return null;
-  } catch (e) {
-    return null;
+// --- Helper baca state (defensif, hanya properti publik) --------------------
+
+function districtCenter(game, name) {
+  const d = game && game.world && game.world.districts;
+  if (!d) return { x: 0, z: 0 };
+  const entry = typeof d.get === "function" ? d.get(name) : d[name];
+  if (!entry) return { x: 0, z: 0 };
+  const c = entry.center || entry;
+  if (c && typeof c.x === "number" && typeof c.z === "number") return { x: c.x, z: c.z };
+  if (Array.isArray(c)) return { x: c[0] || 0, z: c[1] || 0 };
+  return { x: 0, z: 0 };
+}
+
+function getCamera(game) {
+  if (!game) return null;
+  if (game.camera) return game.camera;
+  if (game.renderer && game.renderer.camera) return game.renderer.camera;
+  if (game.world && game.world.camera) return game.world.camera;
+  return null;
+}
+
+function getPlayer(game) {
+  if (!game) return null;
+  if (game.player) return game.player;
+  if (game.entities && game.entities.player) return game.entities.player;
+  return null;
+}
+
+function placePlayer(game, x, z, heading) {
+  const p = getPlayer(game);
+  if (!p) return false;
+  if (p.position && typeof p.position.set === "function") p.position.set(x, 0, z);
+  else {
+    if (typeof p.x === "number") p.x = x;
+    if (typeof p.z === "number") p.z = z;
   }
-}
-
-// Posisi relatif terhadap pemain: fwd meter di depan, lat meter ke kanan.
-// right = (-cos h, sin h) untuk heading h dengan forward (sin h, cos h).
-function relPos(px, pz, heading, fwd, lat) {
-  const fx = Math.sin(heading);
-  const fz = Math.cos(heading);
-  const rx = -fz;
-  const rz = fx;
-  return { x: px + fx * fwd + rx * lat, z: pz + fz * fwd + rz * lat };
-}
-
-// Parkir entity jauh di sudut barat-daya (x/z ~ -208) supaya tidak masuk frame.
-function parkFar(list, fromIndex) {
-  for (let i = fromIndex; i < list.length; i++) {
-    const k = i - fromIndex;
-    list[i].x = -208 + (k % 5) * 6;
-    list[i].z = -208 + Math.floor(k / 5) * 6;
-    list[i].heading = 0;
-    list[i].speed = 0;
-  }
-}
-
-function ensureCount(list, n, factory) {
-  while (list.length < n) list.push(factory(list.length));
-  return list;
-}
-
-// Tempatkan traffic/peds di titik-titik {fwd, lat, heading?, speed?, model?, color?} relatif pemain.
-function placeSpots(game, kind, px, pz, heading, spots) {
-  const list = kind === 'traffic' ? game.entities.traffic : game.entities.peds;
-  ensureCount(list, spots.length, (i) => ({
-    x: 0, z: 0, heading: 0, speed: 0,
-    color: '#f59e0b', model: 'sedan', radius: 2.2,
-  }));
-  for (let i = 0; i < spots.length; i++) {
-    const s = spots[i];
-    const pos = relPos(px, pz, heading, s.fwd, s.lat);
-    const e = list[i];
-    e.x = pos.x;
-    e.z = pos.z;
-    e.heading = (typeof s.heading === 'number') ? s.heading : heading;
-    e.speed = (typeof s.speed === 'number') ? s.speed : (kind === 'traffic' ? 10 : 1.2);
-    if (s.model) e.model = s.model;
-    if (s.color) e.color = s.color;
-    if (kind === 'traffic' && !e.model) e.model = 'sedan';
-  }
-  parkFar(list, spots.length);
-  return list;
-}
-
-function setPlayerCar(game, x, z, heading, speed, condition, color, model) {
-  const p = game.entities.player;
-  const car = game.entities.playerCar;
-  p.x = x; p.z = z; p.heading = heading;
-  p.inCar = true;
-  p.car = car;
-  p.hp = 100;
-  car.x = x; car.z = z; car.heading = heading;
-  car.speed = speed;
-  car.condition = condition;
-  car.color = color || '#ff2d78';
-  car.model = model || 'sedan';
-  return car;
-}
-
-function setPlayerOnFoot(game, x, z, heading, hp) {
-  const p = game.entities.player;
-  p.x = x; p.z = z; p.heading = heading;
-  p.inCar = false;
-  p.car = null;
-  p.hp = (hp == null ? 100 : hp);
-  return p;
-}
-
-function applyBasis(game) {
-  game.state.money = 2450;
-  game.state.score = 12840;
-  game.state.jobsDone = 3;
-  game.missions.completed = 3;
-  game.respect.points = 620;
-  if (game.weapons) {
-    game.weapons.refillAll();
-    game.weapons.select('pistol');
-  }
-  if (game.radio) {
-    game.radio.index = 0;
-    game.radio.setPlaying(true);
-  }
-  if (game.entities) game.entities.clearPolice();
-  if (game.heat) game.heat.clear();
-  if (game.rivals && typeof game.rivals.clear === 'function') game.rivals.clear();
-  game.missions.active = null;
-  game.missions.started = false;
-  game.missions.stageIndex = 0;
-  game.missions.timer = 0;
-  game.missions.chainIndex = 0;
-  game.missions.collected = [];
-  if (game.beacon && typeof game.beacon.hide === 'function') game.beacon.hide();
-  if (game.renderer && typeof game.renderer.setFire === 'function') game.renderer.setFire(0, 0, false);
-  if (game.garage && typeof game.garage.closePanel === 'function') game.garage.closePanel();
-}
-
-function presetCover(game) {
-  // COVER (sel terbesar, PALING PENTING): kejar-kejaran wanted 4 — LEBIH
-  // SEDIKIT, LEBIH BESAR, LEBIH TERBACA. 1 cruiser DEKAT di belakang-kiri,
-  // heli + searchlight, 1 MOBIL TERBAKAR di depan-kanan, beacon 60 m di depan.
-  const px = 0; const pz = 60; const heading = Math.PI;
-  setPlayerCar(game, px, pz, heading, 18, 92, '#ff2d78', 'sedan');
-  // Basis cover: 9/10 job selesai, respect 1240, RIFLE terpilih.
-  game.state.jobsDone = 9;
-  game.missions.completed = 9;
-  game.respect.points = 1240;
-  if (game.weapons) game.weapons.select('rifle');
-  game.heat.setStars(4);
-  // 1 cruiser DEKAT di samping-kiri pemain (fwd 3, lat -7 — posisi lama
-  // fwd -6/lat -5 terpotong tepi kiri frame: H-FOV ~91°, kamera 9 m di
-  // belakang pemain, cruiser di belakang pemain jatuh di luar frustum).
-  game.entities.spawnPolice(1);
-  if (game.entities.police.length > 0) {
-    const c = game.entities.police[0];
-    const pos = relPos(px, pz, heading, 3, -7);
-    c.x = pos.x; c.z = pos.z;
-    c.heading = heading; c.speed = 24;
-  }
-  // Heli visible di depan-kanan + searchlight cone (bagian dari mesh heli).
-  // Posisi lama (fwd 35, lat 12, alt 20) terlalu tinggi: elevasi ~34° di
-  // atas pusat frame, V-FOV ±30° -> heli terpotong tepi atas. Turunkan.
-  game.entities.heli.visible = true;
-  const heliPos = relPos(px, pz, heading, 26, 8);
-  game.entities.heli.x = heliPos.x;
-  game.entities.heli.z = heliPos.z;
-  game.entities.heli.alt = 11;
-  // Beacon misi pink 60 m di depan (0,0).
-  game.beacon.setPink();
-  game.beacon.set(0, 0, true);
-  // Misi aktif: NEON HUNT (job 10) — banner "NEON HUNT 3/10" + timer.
-  game.missions.active = game.missions.defs[9];
-  game.missions.stageIndex = 0;
-  game.missions.started = true;
-  game.missions.timer = 200;
-  game.missions.collected = [true, true, true, false, false, false, false, false, false, false];
-  // 3 traffic di dalam frame (jalan x=0) + 1 MOBIL TERBAKAR di depan-kanan.
-  // Mobil terbakar di fwd 16 (bukan 22): api cone lebih besar di frame.
-  placeSpots(game, 'traffic', px, pz, heading, [
-    { fwd: 15, lat: -2, heading: Math.PI },
-    { fwd: 38, lat: 2, heading: Math.PI },
-    { fwd: 55, lat: -1, heading: 0 },
-    { fwd: 16, lat: 6, speed: 0, color: '#1f2937', model: 'sedan' },
-  ]);
-  // Api + asap di mobil terbakar (state visuals.js + cone api renderer).
-  const burn = relPos(px, pz, heading, 16, 6);
-  if (game.visuals && typeof game.visuals.rivalFire === 'function') game.visuals.rivalFire(burn.x, burn.z);
-  if (game.renderer && typeof game.renderer.setFire === 'function') game.renderer.setFire(burn.x, burn.z, true);
-  // 4 peds BESAR di foreground (trotoar x ±7, 12-22 m di depan).
-  placeSpots(game, 'peds', px, pz, heading, [
-    { fwd: 12, lat: 7 }, { fwd: 14, lat: -7 },
-    { fwd: 18, lat: 6.5 }, { fwd: 22, lat: -7 },
-  ]);
-  game.dialog.show('NBPD', 'NBPD: Semua unit — sedan pink di Strip! Blokir jalan, jangan biarkan kabur!', 30);
-}
-
-function presetStreet(game) {
-  // STREET (BARU, level jalan kaki): pemain JALAN KAKI di trotoar Strip,
-  // close-up — storefront + awning + neon sign, 4 peds besar, 2 traffic dekat.
-  const px = 7; const pz = 40; const heading = Math.PI; // utara, trotoar timur jalan x=0
-  setPlayerOnFoot(game, px, pz, heading, 100);
-  // Basis street: 7/10 job selesai, respect 800.
-  game.state.money = 900;
-  game.state.score = 4200;
-  game.state.jobsDone = 7;
-  game.missions.completed = 7;
-  game.respect.points = 800;
-  // Misi aktif: TAXI FARE (job 8) — banner "TAXI FARE 1/3" + timer.
-  game.missions.active = game.missions.defs[7];
-  game.missions.stageIndex = 0;
-  game.missions.started = true;
-  game.missions.timer = 150;
-  game.missions.chainIndex = 0;
-  // Beacon ke penumpang pertama (arcade) — pilar jauh di kejauhan.
-  game.beacon.setPink();
-  game.beacon.set(26, 182, true);
-  // 2 traffic dekat (satu di samping pemain) + 1 mobil pink parkir.
-  placeSpots(game, 'traffic', px, pz, heading, [
-    { fwd: 3, lat: -4, heading: Math.PI },
-    { fwd: 25, lat: 1, heading: 0 },
-    { fwd: 32, lat: -2, speed: 0, color: '#ff2d78', model: 'sedan' },
-  ]);
-  // 4 peds besar di trotoar dekat pemain.
-  placeSpots(game, 'peds', px, pz, heading, [
-    { fwd: 7, lat: 2 }, { fwd: 10, lat: 3 },
-    { fwd: 13, lat: 1 }, { fwd: 16, lat: 2.5 },
-  ]);
-  game.dialog.hide();
-}
-
-function presetGarage(game) {
-  // GARAGE (BARU, progresi): pemain di garage (-52,104), panel garasi TERBUKA.
-  const px = -52; const pz = 104; const heading = Math.PI; // utara, jalan x=-52
-  setPlayerOnFoot(game, px, pz, heading, 100);
-  // Basis garage: 9/10 job selesai, respect 1240 — HUD "MISI 9/10".
-  game.state.jobsDone = 9;
-  game.missions.completed = 9;
-  game.respect.points = 1240;
-  // Mobil pemain pink parkir di depan garage.
-  const car = game.entities.playerCar;
-  car.x = -52; car.z = 92;
-  car.heading = heading;
-  car.speed = 0;
-  car.condition = 100;
-  car.color = '#ff2d78';
-  car.model = 'sedan';
-  // BIKE cyan + 2 mobil parkir berderet di dekat garage. Sedan hijau di
-  // fwd 26/lat 5 (bukan 29/-3): lebih dekat + sisi kanan, tidak menumpuk
-  // dengan sedan biru (22/-3) dan tetap terlihat besar di frame.
-  placeSpots(game, 'traffic', px, pz, heading, [
-    { fwd: 16, lat: 4, speed: 0, model: 'bike', color: '#22d3ee' },
-    { fwd: 22, lat: -3, speed: 0, color: '#38bdf8', model: 'sedan' },
-    { fwd: 26, lat: 5, speed: 0, color: '#a3e635', model: 'sedan' },
-  ]);
-  // 0 peds (parkir semua jauh) — frame fokus ke panel + deret kendaraan.
-  placeSpots(game, 'peds', px, pz, heading, []);
-  // Panel garasi TERBUKA (#garage-panel terlihat: 4 pilihan + stats).
-  if (game.garage && typeof game.garage.openPanel === 'function') game.garage.openPanel();
-  // Staging shot: geser panel ke kiri-atas (panel tengah 420px menutupi
-  // SEMUA kendaraan di tengah frame; panel di tengah-bawah juga menutupi
-  // kotak misi kiri-bawah) supaya deret kendaraan terlihat di kanan.
-  if (typeof document !== 'undefined') {
-    const panel = document.getElementById('garage-panel');
-    if (panel) { panel.style.left = '16px'; panel.style.top = '140px'; panel.style.transform = 'none'; }
-  }
-  game.dialog.hide();
-}
-
-function presetMission(game) {
-  // MISSION — PIER SHOOTOUT (combat): pemain jalan kaki di pier, 6 rival
-  // TERLIHAT (besar, deterministik di dek), beacon pink, dialog Mira.
-  const pier = game.spawns.pier; // (225, 0)
-  const px = pier.x - 10; const pz = pier.z + 5; // (215, 5)
-  const heading = Math.PI / 2; // timur, ke ujung pier
-  setPlayerOnFoot(game, px, pz, heading, 100);
-  // Mobil pink di dekatnya.
-  const car = game.entities.playerCar;
-  car.x = pier.x + 4; car.z = pier.z + 4.5;
-  car.heading = Math.PI / 2;
-  car.speed = 0;
-  car.condition = 100;
-  car.color = '#ff2d78';
-  car.model = 'sedan';
-  game.beacon.setPink();
-  game.beacon.set(pier.x, pier.z, true);
-  // Misi aktif: PIER SHOOTOUT (job 4) — banner "PIER SHOOTOUT 2/6" + timer.
-  // Basis R6: jobsDone 3, completed 3, respect 620, timer 132, RIFLE terpilih.
-  game.missions.active = game.missions.defs[3];
-  game.missions.stageIndex = 0;
-  game.missions.started = true;
-  game.missions.timer = 132;
-  if (game.weapons) game.weapons.select('rifle');
-  // 6 rival TERLIHAT di dek pier, di depan pemain (timur). Posisi lama
-  // x 235-260 (20-45 m) terlalu jauh: rival hanya titik-titik putih di
-  // frame. Rapatkan ke 8-29 m (tetap di dek, jarak antar rival >= 5 m,
-  // hindari mobil pink di (229, 4.5)).
-  if (game.rivals && typeof game.rivals.spawnShootout === 'function') {
-    game.rivals.spawnShootout(pier.x, pier.z, 6);
-    const spots = [
-      { x: 223, z: -4 }, { x: 228, z: -6 }, { x: 233, z: 7 },
-      { x: 236, z: -2 }, { x: 240, z: 4 }, { x: 244, z: -5 },
-    ];
-    const shooters = game.rivals.shooters || game.rivals.list || [];
-    for (let i = 0; i < spots.length && i < shooters.length; i++) {
-      shooters[i].x = spots[i].x;
-      shooters[i].z = spots[i].z;
-      shooters[i].heading = -Math.PI / 2; // menghadap pemain (barat)
-      shooters[i].alive = true;
-      shooters[i].hp = 100;
+  // heading 0 = menghadap -z (konvensi three.js, maju ke arah -z).
+  if (typeof p.heading === "number") p.heading = heading;
+  else if (typeof p.rotationY === "number") p.rotationY = heading;
+  else if (p.rotation && typeof p.rotation.y === "number") p.rotation.y = heading;
+  // Sedan pemain (mesh entities) ikut ke posisi staged — hanya saat di
+  // kendaraan (on-foot: sedan tetap terparkir di tempat semula).
+  if (p && !p.onFoot) {
+    const sedan = game.entities && game.entities.player;
+    const mesh = sedan && sedan.group;
+    if (mesh && mesh.position && typeof mesh.position.set === "function") {
+      mesh.position.set(x, 0, z);
+      mesh.rotation.y = heading;
     }
-    // Progres kill 2/6 untuk banner (keenam rival tetap TERLIHAT di dek).
-    game.rivals.defeatedCount = 2;
   }
-  // 0 traffic (parkir semua jauh), 3 peds di dek pier.
-  placeSpots(game, 'traffic', px, pz, heading, []);
-  placeSpots(game, 'peds', px, pz, heading, [
-    { fwd: 8, lat: 2 }, { fwd: 14, lat: -3 }, { fwd: 20, lat: 1 },
-  ]);
-  game.dialog.show('Mira', 'Kru rival menyerang di pier! Kalahkan 6 rival, lalu capai mobil extraction.', 30);
+  return true;
 }
 
-export function applyShotPreset(name, game) {
-  if (!name || SHOT_PRESETS.indexOf(name) < 0) return false;
-  if (!game || !game.entities || !game.missions) return false;
-  applyBasis(game);
-  if (name === 'cover') presetCover(game);
-  else if (name === 'street') presetStreet(game);
-  else if (name === 'garage') presetGarage(game);
-  else if (name === 'mission') presetMission(game);
-  game.frozen = true;
-  game.shotMode = name;
-  game.stateName = 'play';
+function setPlayerSpeed(game, speed) {
+  const p = getPlayer(game);
+  if (!p) return;
+  if (typeof p.setSpeed === "function") { p.setSpeed(speed); return; }
+  if (typeof p.speed === "number") p.speed = speed;
+  if (typeof p.cruiseSpeed === "number") p.cruiseSpeed = speed;
+}
+
+function placeCamera(game, x, y, z, tx, ty, tz) {
+  const cam = getCamera(game);
+  if (!cam) return false;
+  if (cam.position && typeof cam.position.set === "function") cam.position.set(x, y, z);
+  else {
+    if (typeof cam.x === "number") cam.x = x;
+    if (typeof cam.y === "number") cam.y = y;
+    if (typeof cam.z === "number") cam.z = z;
+  }
+  if (typeof cam.lookAt === "function") cam.lookAt(tx, ty, tz);
   return true;
+}
+
+function setOnFoot(game, onFoot) {
+  const p = getPlayer(game);
+  if (game.entities && typeof game.entities.setOnFoot === "function") {
+    game.entities.setOnFoot(onFoot);
+    return;
+  }
+  if (p && onFoot && typeof p.exitVehicle === "function") { p.exitVehicle(); return; }
+  if (p && !onFoot && typeof p.enterVehicle === "function") { p.enterVehicle(); return; }
+  if (p) p.onFoot = !!onFoot;
+}
+
+// --- Helper modul lain (semua metode publik, sesuai spec) -------------------
+
+function setVehicle(game, model) {
+  if (game.garage && typeof game.garage.selectVehicle === "function") game.garage.selectVehicle(model);
+}
+
+function setGaragePanel(game, open) {
+  if (!game.garage) return;
+  if (open && typeof game.garage.open === "function") game.garage.open();
+  if (!open && typeof game.garage.close === "function") game.garage.close();
+}
+
+function setWanted(game, level) {
+  if (!game.heat) return;
+  if (typeof game.heat.lower === "function") game.heat.lower(5);
+  if (level > 0 && typeof game.heat.raise === "function") game.heat.raise(level);
+}
+
+function setJob(game, id) {
+  if (game.missions && typeof game.missions.start === "function") game.missions.start(id);
+}
+
+function setJobProgress(game, id, done, total) {
+  if (game.missions && typeof game.missions.setProgress === "function") {
+    game.missions.setProgress(id, done, total);
+  }
+}
+
+function setDialog(game, who, text) {
+  if (game.dialog && typeof game.dialog.say === "function") game.dialog.say(who, text);
+}
+
+function hideDialog(game) {
+  if (game.dialog && typeof game.dialog.hide === "function") game.dialog.hide();
+}
+
+function setBeacon(game, x, z, label) {
+  if (game.beacon && typeof game.beacon.setTarget === "function") game.beacon.setTarget(x, z, label);
+}
+
+function clearBeacon(game) {
+  if (game.beacon && typeof game.beacon.clear === "function") game.beacon.clear();
+}
+
+function hideTitle(game) {
+  if (typeof document === "undefined") return;
+  const el = document.getElementById("title-screen") || document.querySelector(".title-screen");
+  if (el) el.style.display = "none";
+}
+
+function showHint(game, text) {
+  if (typeof document === "undefined") return;
+  const el = document.getElementById("hud-hint");
+  if (!el) return;
+  el.textContent = text;
+  // R12 (c): hint box shot 3 pindah ke kiri bawah, di atas dialog box,
+  // supaya tidak menutup jalan/mobil di tengah frame. JOB ticker tetap terbaca.
+  el.style.left = "24px";
+  el.style.bottom = "96px";
+  el.style.maxWidth = "420px";
+  el.style.display = "block";
+}
+
+function hideHint(game) {
+  if (typeof document === "undefined") return;
+  const el = document.getElementById("hud-hint");
+  if (el) el.style.display = "none";
+}
+
+// --- Traffic: penempatan eksplisit setelah spawn ----------------------------
+// spawnTraffic(n, district) tidak menerima posisi, jadi preset menata ulang
+// kendaraan yang sudah di-spawn lewat daftar publik entities (traffic/vehicles).
+// Semua akses dijaga (guarded) supaya tidak crash bila struktur berbeda.
+
+function trafficList(game) {
+  const e = game && game.entities;
+  if (!e) return [];
+  if (Array.isArray(e.traffic)) return e.traffic;
+  if (Array.isArray(e.vehicles)) return e.vehicles;
+  return [];
+}
+
+function placeVehicle(v, x, z, dirZ, speed) {
+  if (!v) return;
+  if (v.position && typeof v.position.set === "function") v.position.set(x, 0, z);
+  else if (v.group && v.group.position && typeof v.group.position.set === "function") {
+    // Kendaraan builder: mesh ada di v.group (bukan v.position/v.mesh).
+    v.group.position.set(x, 0, z);
+  } else if (v.mesh && v.mesh.position && typeof v.mesh.position.set === "function") {
+    v.mesh.position.set(x, 0, z);
+  } else {
+    if (typeof v.x === "number") v.x = x;
+    if (typeof v.z === "number") v.z = z;
+  }
+  if (typeof v.speed === "number") v.speed = speed;
+  // update() Entities memakai v.dir (bukan dirZ/direction) — setel semuanya
+  // supaya arah gerak sesuai staging (R12: putih harus jalan -z).
+  if (typeof v.dir === "number") v.dir = dirZ >= 0 ? 1 : -1;
+  if (typeof v.dirZ === "number") v.dirZ = dirZ;
+  if (typeof v.direction === "number") v.direction = dirZ >= 0 ? 1 : -1;
+  if (typeof v.heading === "number") v.heading = dirZ >= 0 ? 0 : Math.PI;
+}
+
+function paintVehicle(v, color) {
+  if (!v) return;
+  if (typeof v.setColor === "function") { v.setColor(color); return; }
+  const mesh = v.mesh || v.model || null;
+  if (mesh && mesh.material && mesh.material.color && typeof mesh.material.color.set === "function") {
+    mesh.material.color.set(color);
+  }
+  // Kendaraan builder: body = anak pertama group (material cat sendiri).
+  if (v.group && v.group.children && v.group.children[0]) {
+    const body = v.group.children[0];
+    if (body.material && body.material.color && typeof body.material.color.set === "function") {
+      body.material.color.set(color);
+      if (body.material.emissive && typeof body.material.emissive.set === "function") {
+        body.material.emissive.set(color);
+      }
+    }
+  }
+  if (typeof v.color === "string") v.color = color;
+}
+
+// Peds: spawnPeds() menaruh pejalan kaki di sekitar origin — pindahkan yang
+// baru di-spawn ke trotoar sekitar pusat distrik supaya terlihat di frame.
+// before = jumlah peds sebelum spawn (hanya yang fresh yang dipindah).
+function placePedsNear(game, before, cx, cz) {
+  const e = game && game.entities;
+  if (!e || !Array.isArray(e.peds)) return;
+  const fresh = e.peds.slice(before);
+  const spots = [[-9.5, -14], [9.5, -10], [-9.5, -4], [9.5, -2], [-9.5, 6], [9.5, -16]];
+  for (let i = 0; i < fresh.length; i++) {
+    const g = fresh[i].group;
+    const s = spots[i % spots.length];
+    if (g && g.position && typeof g.position.set === "function") {
+      g.position.set(cx + s[0], 0, cz + s[1]);
+    }
+  }
+}
+
+function markRivalsFallen(game, n) {
+  const r = game && game.rivals;
+  if (!r || typeof r.hit !== "function") return;
+  const list = Array.isArray(r.rivals) ? r.rivals : (Array.isArray(r.list) ? r.list : null);
+  if (!list) return;
+  for (let i = 0; i < n && i < list.length; i++) r.hit(list[i]);
+}
+
+// --- Kelas Shots ------------------------------------------------------------
+
+export class Shots {
+  applyShotPreset(game, id) {
+    if (!game) return "no game";
+    game.frozen = false;
+    hideTitle(game);
+    switch (id) {
+      case "cover": return this.presetCover(game);
+      case "street": return this.presetStreet(game);
+      case "avenue": return this.presetAvenue(game);
+      case "mission": return this.presetMission(game);
+      default: return "unknown shot: " + id;
+    }
+  }
+
+  // 1-cover.jpg (STRIP): sedan pink dikejar — wanted 4, 2 cruiser + 1 heli
+  // (posisi heli 4,30,alt 13 diatur heat.spawnHeli), beacon pink, dialog NBPD,
+  // JOB aktif "JOB 10 NEON HUNT", HUD lengkap, golden-hour.
+  presetCover(game) {
+    const c = districtCenter(game, "STRIP");
+    setVehicle(game, "sedan");
+    setOnFoot(game, false);
+    placePlayer(game, c.x, c.z, 0);
+    setPlayerSpeed(game, CRUISE_SPEED);
+    setWanted(game, 4);
+    if (game.heat && typeof game.heat.spawnCruiser === "function") game.heat.spawnCruiser(2);
+    if (game.heat && typeof game.heat.spawnHeli === "function") game.heat.spawnHeli();
+    // Cruiser + heli spawn di koordinat absolut (dekat origin) — pindahkan
+    // ke sekitar sedan supaya terlihat mengejar di frame (cruiser di
+    // belakang sedan, heli di langit depan).
+    const cruisers = (game.heat && game.heat.cruisers) || [];
+    if (cruisers[0] && cruisers[0].group) cruisers[0].group.position.set(c.x - 5, 0, c.z + 6);
+    if (cruisers[1] && cruisers[1].group) cruisers[1].group.position.set(c.x + 5, 0, c.z + 4);
+    const heli = game.heat && game.heat.heli;
+    if (heli && heli.group) heli.group.position.set(c.x + 4, 13, c.z - 16);
+    const trafficBefore = trafficList(game).length;
+    if (game.entities && typeof game.entities.spawnTraffic === "function") {
+      game.entities.spawnTraffic(3, "STRIP");
+    }
+    // Hanya mobil yang baru di-spawn yang ditata (boot sudah spawn 4 di
+    // origin). Tiga mobil di jalan depan sedan — frame hidup, sedan tak tertutup.
+    const coverCars = trafficList(game).slice(trafficBefore);
+    if (coverCars[0]) placeVehicle(coverCars[0], c.x - 6, c.z - 24, -1, 8);
+    if (coverCars[1]) placeVehicle(coverCars[1], c.x + 6, c.z - 34, 1, 7);
+    if (coverCars[2]) placeVehicle(coverCars[2], c.x - 2, c.z - 44, -1, 6);
+    if (game.entities && typeof game.entities.spawnPeds === "function") {
+      const pedsBefore = game.entities.peds ? game.entities.peds.length : 0;
+      game.entities.spawnPeds(3, "STRIP");
+      placePedsNear(game, pedsBefore, c.x, c.z);
+    }
+    setBeacon(game, c.x, c.z - 30, "NEON HUNT");
+    setJob(game, 10);
+    setDialog(game, "NBPD", "Berhenti! Menepi sekarang atau kami kejar sampai ujung kota!");
+    setGaragePanel(game, false);
+    hideHint(game);
+    placeCamera(game, c.x + 7, 5, c.z + 16, c.x, 1.5, c.z - 8);
+    return "cover: sedan pink dikejar, wanted 4, 2 cruiser + heli, JOB 10 NEON HUNT (STRIP)";
+  }
+
+  // 2-street.jpg (DOWNTOWN): pemain JALAN KAKI, canyon menara kiri-kanan,
+  // taxi oranye lewat, 5 peds terlihat, JOB aktif "JOB 8 TAXI FARE",
+  // minimap label DOWNTOWN (dari posisi pemain di distrik DOWNTOWN).
+  presetStreet(game) {
+    const c = districtCenter(game, "DOWNTOWN");
+    setOnFoot(game, true);
+    placePlayer(game, c.x, c.z + 4, 0);
+    setWanted(game, 0);
+    const trafficBefore = trafficList(game).length;
+    if (game.entities && typeof game.entities.spawnTraffic === "function") {
+      game.entities.spawnTraffic(2, "DOWNTOWN");
+    }
+    const cars = trafficList(game).slice(trafficBefore);
+    if (cars[0]) {
+      paintVehicle(cars[0], "#ff7a00");
+      placeVehicle(cars[0], c.x + 4, c.z - 12, -1, 9);
+    }
+    if (cars[1]) placeVehicle(cars[1], c.x - 5, c.z - 22, 1, 7);
+    if (game.entities && typeof game.entities.spawnPeds === "function") {
+      const pedsBefore = game.entities.peds ? game.entities.peds.length : 0;
+      game.entities.spawnPeds(5, "DOWNTOWN");
+      placePedsNear(game, pedsBefore, c.x, c.z);
+    }
+    clearBeacon(game);
+    setJob(game, 8);
+    hideDialog(game);
+    setGaragePanel(game, false);
+    hideHint(game);
+    placeCamera(game, c.x + 3, 2.5, c.z + 12, c.x, 1.5, c.z - 10);
+    return "street: jalan kaki di canyon DOWNTOWN, taxi oranye, 5 peds, JOB 8 TAXI FARE (DOWNTOWN)";
+  }
+
+  // 3-avenue.jpg (ARCADE) — DELTA R12:
+  // sedan pink cruise speed 12 TANPA wanted, 4 traffic, 5 peds,
+  // gedung arcade ber-neon + awning, panel garasi TERTUTUP,
+  // minimap label ARCADE, hint box "Pergi ke garage dan tekan ENTER..." tampil.
+  // (a) Sport cyan lajur kiri (x=-6, staged z +6, tengah lintasan +14 -> -14,
+  // berlawanan arah) dan mobil putih lajur kanan (x=+6, z=-16, pelan 4):
+  // jarak lateral 12, longitudinal 22 (>= 12 dan >= 20, TIDAK overlap).
+  // Shot dibekukan (frozen) saat capture — posisi staged tidak bergeser.
+  // (c) Hint box digeser kiri bawah (left 24px, bottom 96px, max-width 420px).
+  presetAvenue(game) {
+    const c = districtCenter(game, "ARCADE");
+    setVehicle(game, "sedan");
+    setOnFoot(game, false);
+    placePlayer(game, c.x, c.z + 6, 0);
+    setPlayerSpeed(game, CRUISE_SPEED);
+    setWanted(game, 0);
+    const trafficBefore = trafficList(game).length;
+    if (game.entities && typeof game.entities.spawnTraffic === "function") {
+      game.entities.spawnTraffic(4, "ARCADE");
+    }
+    const cars = trafficList(game).slice(trafficBefore);
+    // Sport cyan: lajur kiri, berlawanan arah, staged di z +6 (tengah
+    // lintasannya +14 -> -14; jarak longitudinal ke mobil putih (-16) = 22
+    // unit, tetap >= 20; di z +14 ia terlalu dekat kamera dan terpotong tepi).
+    if (cars[0]) {
+      paintVehicle(cars[0], "#00e5ff");
+      placeVehicle(cars[0], c.x - 6, c.z + 6, -1, 8);
+    }
+    // Mobil putih: lajur kanan, searah sedan pemain, z -16, pelan (speed 4).
+    if (cars[1]) {
+      paintVehicle(cars[1], "#ffffff");
+      placeVehicle(cars[1], c.x + 6, c.z - 16, -1, 4);
+    }
+    // Dua traffic lain dijaga >= 8 unit dari keduanya (anti-clipping, R12).
+    if (cars[2]) placeVehicle(cars[2], c.x - 6, c.z - 30, 1, 7);
+    if (cars[3]) placeVehicle(cars[3], c.x + 6, c.z + 28, -1, 7);
+    if (game.entities && typeof game.entities.spawnPeds === "function") {
+      const pedsBefore = game.entities.peds ? game.entities.peds.length : 0;
+      game.entities.spawnPeds(5, "ARCADE");
+      placePedsNear(game, pedsBefore, c.x, c.z);
+    }
+    setBeacon(game, c.x, c.z - 40, "COURIER DASH");
+    setJob(game, 7);
+    hideDialog(game);
+    setGaragePanel(game, false);
+    showHint(game, HINT_TEXT);
+    placeCamera(game, c.x, 5, c.z + 20, c.x, 1.5, c.z - 8);
+    return "avenue: sedan pink cruise 12 tanpa wanted, sport cyan vs mobil putih terpisah, JOB 7 COURIER DASH (ARCADE)";
+  }
+
+  // 4-mission.jpg (BEACH): pier shootout — pemain dengan rifle, 6 rival di pier
+  // (2 sudah jatuh, 4 berdiri, semua terlihat), JOB aktif
+  // "JOB 4 PIER SHOOTOUT 2/6", minimap label BEACH, laut + sunset di latar.
+  presetMission(game) {
+    const c = districtCenter(game, "BEACH");
+    setOnFoot(game, true);
+    placePlayer(game, c.x, c.z + 10, Math.PI);
+    setWanted(game, 0);
+    if (game.weapons && typeof game.weapons.equip === "function") game.weapons.equip("rifle");
+    if (game.rivals && typeof game.rivals.spawnPier === "function") game.rivals.spawnPier(6);
+    // Rival spawn di koordinat lokal pier (z 30..70) — pindahkan ke dek
+    // pier BEACH (world.pierRivalPositions, z 194..208) supaya terlihat.
+    const pierSpots = (game.world && game.world.pierRivalPositions) || [];
+    const rlist = game.rivals && game.rivals.rivals;
+    if (Array.isArray(rlist)) {
+      for (let i = 0; i < rlist.length; i++) {
+        const spot = pierSpots[i];
+        const g = rlist[i] && rlist[i].group;
+        if (spot && g && g.position) {
+          g.position.set(spot.x, 0, spot.z);
+          rlist[i].x = spot.x;
+          rlist[i].z = spot.z;
+        }
+      }
+    }
+    markRivalsFallen(game, 2);
+    setJob(game, 4);
+    setJobProgress(game, 4, 2, 6);
+    setBeacon(game, c.x, c.z - 30, "PIER SHOOTOUT");
+    hideDialog(game);
+    setGaragePanel(game, false);
+    hideHint(game);
+    // Rifle sebagai viewmodel di kamera (pemain on-foot tak punya figur
+    // terlihat) — laras mengarah ke pier.
+    const cam = getCamera(game);
+    const rifleModel = game.weapons && game.weapons.model;
+    if (cam && rifleModel) {
+      rifleModel.position.set(0.35, -0.38, -0.9);
+      rifleModel.rotation.set(0, Math.PI, 0);
+      cam.add(rifleModel);
+    }
+    // Kamera lebih dekat ke pier (dari z-10 ke z+8): rival di z 194..208
+    // kini 16..30 unit di depan kamera (sebelumnya 34..48 — terlalu kecil).
+    placeCamera(game, c.x + 3, 3.2, c.z + 8, c.x, 1.5, c.z + 30);
+    return "mission: pier shootout dengan rifle, 6 rival (2 jatuh), JOB 4 PIER SHOOTOUT 2/6 (BEACH)";
+  }
 }

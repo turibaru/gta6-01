@@ -1,78 +1,81 @@
-// dialog.js — Dialog / briefing HUD — GTA 6 R7
-// Spec §5. Tampil di #hud-dialog (#hud-dialog-name + #hud-dialog-text),
-// auto-hide setelah `seconds`. queue() menumpuk dialog berurutan.
-
+// dialog.js — NPC dialog box for NEON BAY: SUNSET RUN.
+// Bottom dialog box with speaker name. Required in shot 1: speaker "NBPD"
+// with a police chase warning (1-2 sentences).
 export class Dialog {
-  constructor() {
-    this.visible = false;
-    this.name = '';
-    this.text = '';
-    this._timer = 0;
-    this._queue = [];
-    this._el = null;
-    this._nameEl = null;
-    this._textEl = null;
-    if (typeof document !== 'undefined') {
-      this._el = document.getElementById('hud-dialog');
-      this._nameEl = document.getElementById('hud-dialog-name');
-      this._textEl = document.getElementById('hud-dialog-text');
+  constructor(el) {
+    try {
+      const doc = (typeof document !== 'undefined') ? document : null;
+      this.el = el || (doc ? doc.getElementById('hud-dialog') : null);
+      this.whoEl = doc ? doc.getElementById('dialog-who') : null;
+      this.textEl = doc ? doc.getElementById('dialog-text') : null;
+      this.lines = [];
+      this.visible = false;
+      this.currentWho = '';
+      this.currentText = '';
+    } catch (e) {
+      this.el = null;
+      this.whoEl = null;
+      this.textEl = null;
+      this.lines = [];
+      this.visible = false;
     }
   }
 
-  _render() {
-    if (this._el) this._el.style.display = this.visible ? 'block' : 'none';
-    if (this._nameEl) this._nameEl.textContent = this.name || '';
-    if (this._textEl) this._textEl.textContent = this.text || '';
+  say(who, text) {
+    try {
+      this.currentWho = who || '???';
+      this.currentText = text || '';
+      if (this.whoEl) this.whoEl.textContent = this.currentWho;
+      if (this.textEl) this.textEl.textContent = this.currentText;
+      if (this.el) this.el.style.display = 'block';
+      this.visible = true;
+    } catch (e) { /* headless: never crash */ }
+    return this;
   }
 
-  show(name, text, seconds = 4) {
-    this.name = name || '';
-    this.text = text || '';
-    this.visible = true;
-    this._timer = Math.max(0.5, seconds || 4);
-    this._render();
-    return this;
+  // Alias of say() with speaker "???".
+  show(text) {
+    return this.say('???', text);
   }
 
   hide() {
-    this.visible = false;
-    this._timer = 0;
-    this._render();
-    // Bila ada antrean, tampilkan berikutnya.
-    if (this._queue.length > 0) {
-      const next = this._queue.shift();
-      this.show(next.name, next.text, next.seconds);
+    try {
+      if (this.el) this.el.style.display = 'none';
+      this.visible = false;
+    } catch (e) { /* headless: never crash */ }
+    return this;
+  }
+
+  // Queue of {who, text} lines; shows the first, advance() shows the next.
+  queue(lines) {
+    try {
+      this.lines = Array.isArray(lines) ? lines.slice() : [];
+      this._next();
+    } catch (e) { /* headless: never crash */ }
+    return this;
+  }
+
+  advance() {
+    try {
+      this._next();
+    } catch (e) { /* headless: never crash */ }
+    return this;
+  }
+
+  _next() {
+    if (!this.lines.length) {
+      this.hide();
+      return;
     }
-    return this;
+    const line = this.lines.shift();
+    this.say(line.who || '???', line.text || '');
   }
 
-  // Briefing misi: nama misi + brief + payout.
-  showBriefing(def) {
-    if (!def) return this;
-    const title = def.name || ('JOB ' + (def.id || ''));
-    const brief = def.brief || def.description || '';
-    const payout = def.payout ? ' — Hadiah $' + def.payout : '';
-    const timer = def.timer ? ' — ' + def.timer + ' dtk' : '';
-    return this.show(title, brief + payout + timer, 6);
-  }
-
-  queue(name, text, seconds = 4) {
-    if (!this.visible) return this.show(name, text, seconds);
-    this._queue.push({ name, text, seconds });
-    return this;
-  }
-
-  // Dipanggil tiap frame dari main loop.
-  update(dt) {
-    if (!this.visible) return;
-    this._timer -= dt;
-    if (this._timer <= 0) this.hide();
-  }
-
-  clearQueue() {
-    this._queue.length = 0;
-    return this;
+  // Required shot 1 dialog: NBPD chase warning.
+  showNbpdWarning() {
+    return this.say(
+      'NBPD',
+      'Berhenti! Matikan mesin dan keluar dari kendaraan sekarang — kejar-kejaran ini berakhir di sini!'
+    );
   }
 }
-
-export default Dialog;

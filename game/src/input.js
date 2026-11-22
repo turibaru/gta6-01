@@ -1,115 +1,112 @@
-// input.js — Keyboard + mouse — GTA 6 R7
-// Spec §5. WASD/panah, SHIFT, E, SPASI, F, 1-5, R, G, P/ESC, M, ENTER.
-// Mouse click = tembak. Edge-trigger untuk ENTER/E/F/G/R (sekali per tekan).
-
+// input.js — keyboard input for NEON BAY: SUNSET RUN.
+// WASD/arrows (drive/steer), ENTER (start / confirm / enter garage),
+// E (interact), R (reload), Space (brake/action), M (mute radio).
 export class Input {
   constructor() {
-    this.keys = new Set(); // kode yang sedang ditekan (event.code)
-    this.pressed = new Set(); // edge: baru ditekan sejak frame terakhir
-    this.mouseClicked = false; // edge klik mouse
-    this.mouseDown = false;
-    this._attached = false;
-    this._onKeyDown = (e) => {
-      if (e.repeat) return;
-      if (!this.keys.has(e.code)) this.pressed.add(e.code);
-      this.keys.add(e.code);
-      // Cegah scroll halaman oleh panah / spasi saat bermain.
-      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) {
-        if (e.preventDefault) e.preventDefault();
+    this.down = new Set();
+    this.justPressed = new Set();
+    this.hintEl = null;
+    this.hintVisible = false;
+    try {
+      if (typeof document !== 'undefined') {
+        this.hintEl = document.getElementById('hud-hint');
       }
-    };
-    this._onKeyUp = (e) => { this.keys.delete(e.code); };
-    this._onMouseDown = () => {
-      if (!this.mouseDown) this.mouseClicked = true;
-      this.mouseDown = true;
-    };
-    this._onMouseUp = () => { this.mouseDown = false; };
-    this._onBlur = () => { this.keys.clear(); this.mouseDown = false; };
+      if (typeof window !== 'undefined') {
+        const self = this;
+        window.addEventListener('keydown', function (e) {
+          try {
+            const key = (e.key || '').toLowerCase();
+            if (key === ' ' || key === 'arrowup' || key === 'arrowdown' ||
+                key === 'arrowleft' || key === 'arrowright') {
+              e.preventDefault();
+            }
+            if (!self.down.has(key)) self.justPressed.add(key);
+            self.down.add(key);
+          } catch (err) { /* ignore */ }
+        });
+        window.addEventListener('keyup', function (e) {
+          try {
+            self.down.delete((e.key || '').toLowerCase());
+          } catch (err) { /* ignore */ }
+        });
+        window.addEventListener('blur', function () {
+          try { self.down.clear(); } catch (err) { /* ignore */ }
+        });
+      }
+    } catch (e) { /* headless: never crash */ }
   }
 
-  attach(target) {
-    if (this._attached || typeof window === 'undefined') return this;
-    const t = target || window;
-    t.addEventListener('keydown', this._onKeyDown);
-    t.addEventListener('keyup', this._onKeyUp);
-    t.addEventListener('mousedown', this._onMouseDown);
-    t.addEventListener('mouseup', this._onMouseUp);
-    t.addEventListener('blur', this._onBlur);
-    this._attached = true;
-    return this;
+  _norm(key) {
+    const k = (key || '').toLowerCase();
+    if (k === 'space' || k === ' ') return ' ';
+    return k;
   }
 
-  detach(target) {
-    if (!this._attached || typeof window === 'undefined') return this;
-    const t = target || window;
-    t.removeEventListener('keydown', this._onKeyDown);
-    t.removeEventListener('keyup', this._onKeyUp);
-    t.removeEventListener('mousedown', this._onMouseDown);
-    t.removeEventListener('mouseup', this._onMouseUp);
-    t.removeEventListener('blur', this._onBlur);
-    this._attached = false;
-    return this;
+  isDown(key) {
+    try {
+      return this.down.has(this._norm(key));
+    } catch (e) {
+      return false;
+    }
   }
 
-  // Apakah kode sedang ditekan (level).
-  down(...codes) {
-    return codes.some((c) => this.keys.has(c));
+  pressed(key) {
+    try {
+      return this.justPressed.has(this._norm(key));
+    } catch (e) {
+      return false;
+    }
   }
 
-  // Apakah kode BARU ditekan frame ini (edge, sekali per tekan).
-  wasPressed(...codes) {
-    return codes.some((c) => this.pressed.has(c));
+  // Read keyboard state each frame: clears the just-pressed set so
+  // pressed() fires exactly once per key press.
+  update() {
+    try {
+      this.justPressed.clear();
+    } catch (e) { /* ignore */ }
   }
 
-  // Alias yang dipakai beberapa pemanggil.
-  pressedOnce(...codes) { return this.wasPressed(...codes); }
-
-  // Gerak: +1 maju, -1 mundur; belok +1 kanan, -1 kiri.
-  get forward() {
-    return (this.down('KeyW', 'ArrowUp') ? 1 : 0) - (this.down('KeyS', 'ArrowDown') ? 1 : 0);
+  // Steering / driving helpers.
+  get throttle() {
+    return (this.isDown('w') || this.isDown('arrowup')) ? 1 : 0;
   }
 
-  get strafe() {
-    return (this.down('KeyD', 'ArrowRight') ? 1 : 0) - (this.down('KeyA', 'ArrowLeft') ? 1 : 0);
+  get brake() {
+    return (this.isDown('s') || this.isDown('arrowdown') || this.isDown(' ')) ? 1 : 0;
   }
 
-  // Alias arah untuk entities.update (W/S/A/D + panah).
-  get up() { return this.down('KeyW', 'ArrowUp'); }
-  get downKey() { return this.down('KeyS', 'ArrowDown'); }
-  get left() { return this.down('KeyA', 'ArrowLeft'); }
-  get right() { return this.down('KeyD', 'ArrowRight'); }
-  get run() { return this.down('ShiftLeft', 'ShiftRight'); }
-  get handbrake() { return this.down('Space'); }
-
-  // Tembak: F (edge) atau klik mouse (edge).
-  get shootPressed() {
-    return this.wasPressed('KeyF') || this.mouseClicked;
+  get steer() {
+    let s = 0;
+    if (this.isDown('a') || this.isDown('arrowleft')) s -= 1;
+    if (this.isDown('d') || this.isDown('arrowright')) s += 1;
+    return s;
   }
 
-  // Dipanggil di AKHIR tiap frame oleh main loop: bersihkan edge.
-  endFrame() {
-    this.pressed.clear();
-    this.mouseClicked = false;
-    return this;
+  showHint(text) {
+    try {
+      if (this.hintEl) {
+        this.hintEl.textContent = text || 'Pergi ke garage dan tekan ENTER...';
+        this.hintEl.style.display = 'block';
+      }
+      this.hintVisible = true;
+    } catch (e) { /* ignore */ }
   }
 
-  // Untuk tes / playtest sintetis: tekan & lepas kode secara programatik.
-  press(code) {
-    if (!this.keys.has(code)) this.pressed.add(code);
-    this.keys.add(code);
-    return this;
+  hideHint() {
+    try {
+      if (this.hintEl) this.hintEl.style.display = 'none';
+      this.hintVisible = false;
+    } catch (e) { /* ignore */ }
   }
 
-  release(code) {
-    this.keys.delete(code);
-    return this;
-  }
-
-  click() {
-    this.mouseClicked = true;
-    this.mouseDown = true;
-    return this;
+  // Show the garage hint while the player is near the garage, hide it away.
+  updateHint(nearGarage) {
+    try {
+      if (nearGarage) {
+        this.showHint('Pergi ke garage dan tekan ENTER...');
+      } else {
+        this.hideHint();
+      }
+    } catch (e) { /* ignore */ }
   }
 }
-
-export default Input;

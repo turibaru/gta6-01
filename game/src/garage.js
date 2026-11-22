@@ -1,133 +1,99 @@
-// garage.js — Garasi: upgrade, repair, paint, pilih kendaraan — GTA 6 R7
-// Spec §3 + §5 + §17.2. engine 3 level (+6 speed & +4 accel/level, $300),
-// repair $150 (condition 100), paint $100 (PAINT_COLORS).
-// Panel HTML #garage-panel; 4 pilihan kendaraan: sedan/sport/truck/bike.
-// Dibuka dengan G di dekat marker garage.
+// game/src/garage.js — Garage: ganti kendaraan + panel UI 350px.
+// Spec: r10-design-spec.md bagian 11 (Garage).
+import { CONFIG } from "./config.js";
 
-export const GARAGE_UPGRADES = {
-  engineCost: 300, engineMaxLevel: 3, engineSpeedBonus: 6, engineAccelBonus: 4,
-  repairCost: 150, paintCost: 100,
-};
-export const PAINT_COLORS = [
-  '#ff2d78', '#ffb020', '#22d3ee', '#a3e635',
-  '#8b5cf6', '#f43f5e', '#e2e8f0', '#0ea5e9',
-];
-export const GARAGE_VEHICLES = ['sedan', 'sport', 'truck', 'bike'];
+const PANEL_WIDTH = (CONFIG && CONFIG.GARAGE_PANEL_WIDTH) || 350;
 
 export class Garage {
-  constructor() {
-    this.open = false;
-    this.engineLevel = 0;
-    this.paintIndex = 0;
-    this.vehicle = 'sedan'; // pilihan kendaraan aktif
-    this._panel = null;
-    if (typeof document !== 'undefined') {
-      this._panel = document.getElementById('garage-panel');
+  constructor(scene) {
+    this.scene = scene || null;
+    this.current = "sedan";
+    this.isOpen = false;
+    this.models = {
+      sedan: { id: "sedan", label: "Sedan Pink", color: "#ff4da6" },
+      bike: { id: "bike", label: "Bike", color: "#ff7a00" },
+      sport: { id: "sport", label: "Sport Cyan", color: "#00e5ff" },
+    };
+    this.panel = null;
+    if (typeof document !== "undefined") this._buildPanel();
+  }
+
+  _buildPanel() {
+    const panel = document.createElement("div");
+    panel.id = "garage-panel";
+    panel.style.position = "absolute";
+    panel.style.left = "24px";
+    panel.style.top = "96px";
+    panel.style.width = PANEL_WIDTH + "px";
+    panel.style.display = "none";
+    panel.style.background = "rgba(10,10,24,0.88)";
+    panel.style.border = "2px solid #ff2e88";
+    panel.style.color = "#ffffff";
+    panel.style.fontFamily = "monospace";
+    panel.style.padding = "16px";
+    panel.style.zIndex = "20";
+    const title = document.createElement("h2");
+    title.textContent = "GARAGE";
+    title.style.margin = "0 0 12px 0";
+    title.style.color = "#ff2e88";
+    panel.appendChild(title);
+    const list = document.createElement("div");
+    const ids = Object.keys(this.models);
+    for (let i = 0; i < ids.length; i++) {
+      const id = ids[i];
+      const btn = document.createElement("button");
+      btn.textContent = this.models[id].label;
+      btn.setAttribute("data-model", id);
+      btn.style.display = "block";
+      btn.style.width = "100%";
+      btn.style.margin = "6px 0";
+      btn.style.padding = "10px";
+      btn.style.background = "#1a1a2e";
+      btn.style.color = this.models[id].color;
+      btn.style.border = "1px solid " + this.models[id].color;
+      btn.style.fontFamily = "monospace";
+      btn.style.cursor = "pointer";
+      btn.addEventListener("click", () => { this.selectVehicle(id); });
+      list.appendChild(btn);
     }
+    panel.appendChild(list);
+    const hint = document.createElement("div");
+    hint.textContent = "Pilih kendaraan, lalu tekan ENTER.";
+    hint.style.marginTop = "10px";
+    hint.style.color = "#00e5ff";
+    panel.appendChild(hint);
+    if (document.body) document.body.appendChild(panel);
+    this.panel = panel;
   }
 
-  _render() {
-    if (this._panel) this._panel.style.display = this.open ? 'block' : 'none';
-  }
-
-  openPanel() {
-    this.open = true;
-    this._render();
-    return true;
-  }
-
-  closePanel() {
-    this.open = false;
-    this._render();
-    return true;
-  }
-
-  // Catatan: `open` adalah properti boolean (playtest membaca
-  // garage.open === true). Metode buka/tutup bernama openPanel/closePanel
-  // agar tidak tertutup properti tersebut.
-  toggle() {
-    return this.open ? this.closePanel() : this.openPanel();
-  }
-
-  // state: { money }. Mengembalikan { ok, reason?, level?, money? }.
-  upgrade(state) {
-    if (this.engineLevel >= GARAGE_UPGRADES.engineMaxLevel) {
-      return { ok: false, reason: 'max-level', level: this.engineLevel };
-    }
-    if (!state || state.money < GARAGE_UPGRADES.engineCost) {
-      return { ok: false, reason: 'no-money', level: this.engineLevel };
-    }
-    state.money -= GARAGE_UPGRADES.engineCost;
-    this.engineLevel++;
-    return { ok: true, level: this.engineLevel, money: state.money };
-  }
-
-  repair(state, car) {
-    if (!state || state.money < GARAGE_UPGRADES.repairCost) {
-      return { ok: false, reason: 'no-money' };
-    }
-    state.money -= GARAGE_UPGRADES.repairCost;
-    if (car) {
-      const max = car.model === 'bike' ? 60 : (car.model === 'truck' ? 120 : 100);
-      car.condition = max;
-    }
-    return { ok: true, money: state.money };
-  }
-
-  paint(state, car, colorIndex = null) {
-    if (!state || state.money < GARAGE_UPGRADES.paintCost) {
-      return { ok: false, reason: 'no-money' };
-    }
-    if (colorIndex != null) this.paintIndex = colorIndex % PAINT_COLORS.length;
-    else this.paintIndex = (this.paintIndex + 1) % PAINT_COLORS.length;
-    state.money -= GARAGE_UPGRADES.paintCost;
-    const color = PAINT_COLORS[this.paintIndex];
-    if (car) car.color = color;
-    return { ok: true, color, money: state.money };
-  }
-
-  // Pilih kendaraan ke-4 BIKE (atau sedan/sport/truck). Terapkan ke playerCar.
-  selectVehicle(model, car) {
-    if (!GARAGE_VEHICLES.includes(model)) return { ok: false, reason: 'unknown-vehicle' };
-    this.vehicle = model;
-    if (car) {
-      car.model = model;
-      if (model === 'bike') {
-        car.color = '#22d3ee';
-        car.condition = Math.min(car.condition == null ? 60 : car.condition, 60);
-      } else if (car.color === '#22d3ee') {
-        car.color = '#ff2d78';
+  // Ganti kendaraan pemain. TIDAK rekursif (bug R8).
+  selectVehicle(model) {
+    if (!this.models[model]) return this.current;
+    this.current = model;
+    if (this.panel) {
+      const buttons = this.panel.querySelectorAll("button[data-model]");
+      for (let i = 0; i < buttons.length; i++) {
+        const b = buttons[i];
+        const mid = b.getAttribute("data-model");
+        const selected = mid === model;
+        b.style.background = selected ? "#ff2e88" : "#1a1a2e";
+        b.style.color = selected ? "#ffffff" : this.models[mid].color;
       }
-      car.speed = 0;
     }
-    return { ok: true, vehicle: model };
+    return this.current;
   }
 
-  // Terapkan level engine + warna ke mobil pemain (dipanggil saat keluar garasi / load save).
-  applyTo(car) {
-    if (!car) return car;
-    car.engineBonus = this.engineLevel * GARAGE_UPGRADES.engineSpeedBonus;
-    car.accelBonus = this.engineLevel * GARAGE_UPGRADES.engineAccelBonus;
-    return car;
+  open() {
+    this.isOpen = true;
+    if (this.panel) this.panel.style.display = "block";
   }
 
-  // Wiring tombol panel HTML (data-car, #garage-close, dst). Aman bila DOM kosong.
-  bindPanel(handlers = {}) {
-    if (typeof document === 'undefined') return this;
-    const panel = document.getElementById('garage-panel');
-    if (!panel) return this;
-    this._panel = panel;
-    panel.querySelectorAll('[data-car]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const model = btn.getAttribute('data-car');
-        if (handlers.onSelectVehicle) handlers.onSelectVehicle(model);
-        else this.selectVehicle(model, handlers.car || null);
-      });
-    });
-    const closeBtn = document.getElementById('garage-close');
-    if (closeBtn) closeBtn.addEventListener('click', () => this.closePanel());
-    return this;
+  close() {
+    this.isOpen = false;
+    if (this.panel) this.panel.style.display = "none";
+  }
+
+  listVehicles() {
+    return ["sedan", "bike", "sport"];
   }
 }
-
-export default Garage;

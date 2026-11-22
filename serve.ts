@@ -1,56 +1,85 @@
-// serve.ts — server file statis untuk game NEON BAY: SUNSET RUN.
-// Node 22 stdlib saja. Root = game/ di sebelah file ini.
-// PORT env (default 8080), listen 127.0.0.1.
-import { createReadStream, existsSync, statSync } from 'node:fs';
-import { createServer } from 'node:http';
-import { dirname, extname, join, normalize, resolve, sep } from 'node:path';
-import { fileURLToPath } from 'node:url';
+// serve.ts — Server HTTP statis untuk "NEON BAY: SUNSET RUN" (gta6-01, ronde 12).
+// Node tanpa dependensi eksternal. Jalankan: node serve.ts
+// Menyajikan direktori repo di port 8080 dengan content-type yang benar
+// untuk .html/.js/.mjs/.json/.jpg/.png/.css/.svg/.ico.
+// Ditulis sebagai sintaks JS murni (tanpa anotasi TS) supaya bisa dijalankan
+// langsung oleh `node serve.ts` (type stripping Node 22+).
+import http from "node:http";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), 'game');
-const PORT = Number(process.env.PORT ?? 8080);
-const HOST = '127.0.0.1';
+const ROOT = path.dirname(fileURLToPath(import.meta.url));
+const PORT = Number(process.env.PORT || 8080);
 
-const MIME: Record<string, string> = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.mjs': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.json': 'application/json; charset=utf-8',
-  '.svg': 'image/svg+xml',
-  '.ico': 'image/x-icon',
+const MIME = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".mjs": "text/javascript; charset=utf-8",
+  ".ts": "text/javascript; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".css": "text/css; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".ico": "image/x-icon",
+  ".md": "text/markdown; charset=utf-8",
+  ".txt": "text/plain; charset=utf-8",
 };
 
-const server = createServer((req, res) => {
+function resolvePath(urlPath) {
+  const decoded = decodeURIComponent(urlPath.split("?")[0].split("#")[0]);
+  const rel = decoded.replace(/^\/+/, "");
+  const abs = path.normalize(path.join(ROOT, rel));
+  if (abs !== ROOT && !abs.startsWith(ROOT + path.sep)) return null;
+  return abs;
+}
+
+const server = http.createServer((req, res) => {
+  if (req.method !== "GET" && req.method !== "HEAD") {
+    res.writeHead(405, { "content-type": "text/plain; charset=utf-8" });
+    res.end("method not allowed\n");
+    return;
+  }
+  let file = resolvePath(req.url || "/");
+  if (file === null) {
+    res.writeHead(403, { "content-type": "text/plain; charset=utf-8" });
+    res.end("forbidden\n");
+    return;
+  }
+  if (file === ROOT) file = path.join(ROOT, "game", "index.html");
   try {
-    // Query string diabaikan saat mencari file.
-    const rawPath = decodeURIComponent((req.url ?? '/').split('?')[0].split('#')[0]);
-    const relPath = rawPath === '/' ? 'index.html' : rawPath.replace(/^\/+/, '');
-    const resolved = resolve(join(ROOT, normalize(relPath)));
-    // Path traversal keluar dari game/ ditolak (403).
-    if (resolved !== ROOT && !resolved.startsWith(ROOT + sep)) {
-      res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-      res.end('403 Forbidden\n');
-      return;
+    const stat = fs.statSync(file);
+    if (stat.isDirectory()) {
+      const index = path.join(file, "index.html");
+      if (fs.existsSync(index)) file = index;
+      else {
+        res.writeHead(403, { "content-type": "text/plain; charset=utf-8" });
+        res.end("forbidden\n");
+        return;
+      }
     }
-    const target = statSync(resolved, { throwIfNoEntry: false })?.isDirectory()
-      ? join(resolved, 'index.html')
-      : resolved;
-    if (!existsSync(target) || !statSync(target).isFile()) {
-      res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
-      res.end('404 Not Found\n');
-      return;
+    const ext = path.extname(file).toLowerCase();
+    const type = MIME[ext] || "application/octet-stream";
+    res.writeHead(200, { "content-type": type, "content-length": fs.statSync(file).size });
+    if (req.method === "HEAD") { res.end(); return; }
+    fs.createReadStream(file).pipe(res);
+  } catch (err) {
+    if (err && err.code === "ENOENT") {
+      res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+      res.end("not found\n");
+    } else {
+      res.writeHead(500, { "content-type": "text/plain; charset=utf-8" });
+      res.end("internal error\n");
     }
-    res.writeHead(200, { 'content-type': MIME[extname(target).toLowerCase()] ?? 'application/octet-stream' });
-    createReadStream(target).pipe(res);
-  } catch {
-    res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' });
-    res.end('500 Internal Server Error\n');
   }
 });
 
-server.listen(PORT, HOST, () => {
-  console.log(`serve.ts: http://${HOST}:${PORT}/`);
+server.listen(PORT, () => {
+  console.log("serve: http://localhost:" + PORT + "/  (root: " + ROOT + ")");
 });
+
+export { server };
