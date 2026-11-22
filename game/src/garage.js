@@ -1,8 +1,15 @@
-// garage.js — Garasi: upgrade, repair, paint, pilih kendaraan — GTA 6 R7
+// garage.js — Garasi: upgrade, repair, paint, pilih kendaraan — GTA 6 R8
 // Spec §3 + §5 + §17.2. engine 3 level (+6 speed & +4 accel/level, $300),
 // repair $150 (condition 100), paint $100 (PAINT_COLORS).
 // Panel HTML #garage-panel; 4 pilihan kendaraan: sedan/sport/truck/bike.
 // Dibuka dengan G di dekat marker garage.
+//
+// R8 §2.3: applyCompactGaragePanel — panel DIPERKECIL ke ~35% lebar layar
+// (GARAGE_PANEL_WIDTH_PX 350, dulu 420) supaya kendaraan + dunia terlihat
+// di samping/belakang panel. Shot garasi harus menunjukkan SISTEM
+// (kendaraan + uang + dunia), bukan menu saja.
+
+import { GARAGE_PANEL_WIDTH_PX } from './config.js';
 
 export const GARAGE_UPGRADES = {
   engineCost: 300, engineMaxLevel: 3, engineSpeedBonus: 6, engineAccelBonus: 4,
@@ -13,6 +20,8 @@ export const PAINT_COLORS = [
   '#8b5cf6', '#f43f5e', '#e2e8f0', '#0ea5e9',
 ];
 export const GARAGE_VEHICLES = ['sedan', 'sport', 'truck', 'bike'];
+// R8 §2.3: lebar panel garasi yang ramping (350 px di layar 1280).
+export const GARAGE_PANEL_WIDTH = GARAGE_PANEL_WIDTH_PX;
 
 export class Garage {
   constructor() {
@@ -30,8 +39,19 @@ export class Garage {
     if (this._panel) this._panel.style.display = this.open ? 'block' : 'none';
   }
 
+  // R8 §2.3: terapkan panel garasi yang ramping (350 px) setiap kali
+  // panel dibuka — kendaraan + dunia tetap terlihat di sampingnya.
+  applyCompactGaragePanel() {
+    if (typeof document === 'undefined') return this;
+    const panel = document.getElementById('garage-panel');
+    if (panel) panel.style.width = GARAGE_PANEL_WIDTH_PX + 'px';
+    this._panel = panel || this._panel;
+    return this;
+  }
+
   openPanel() {
     this.open = true;
+    this.applyCompactGaragePanel();
     this._render();
     return true;
   }

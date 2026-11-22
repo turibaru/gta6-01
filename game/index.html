@@ -14,40 +14,40 @@
   .hud { position: fixed; z-index: 10; pointer-events: none;
     text-shadow: 0 1px 3px rgba(0,0,0,.8); }
   .panel { background: rgba(23, 18, 38, 0.72); border: 1px solid rgba(255,45,120,.45);
-    border-radius: 10px; padding: 10px 14px; backdrop-filter: blur(2px); }
+    border-radius: 10px; padding: 12px 16px; backdrop-filter: blur(2px); }
 
   #hud-top-left { top: 14px; left: 14px; }
-  #hud-top-left .row { font-size: 20px; font-weight: 700; margin-bottom: 2px; }
+  #hud-top-left .row { font-size: 26px; font-weight: 700; margin-bottom: 2px; }
   #hud-money { color: #a3e635; }
-  #hud-score { color: #e2e8f0; font-size: 15px !important; }
-  #hud-jobs { color: #22d3ee; font-size: 15px !important; }
-  #hud-wanted { color: #ffd166; letter-spacing: 2px; font-size: 22px !important; }
+  #hud-score { color: #e2e8f0; font-size: 18px !important; }
+  #hud-jobs { color: #22d3ee; font-size: 18px !important; }
+  #hud-wanted { color: #ffd166; letter-spacing: 2px; font-size: 27px !important; }
   #hud-wanted .star-off { color: #4b4360; }
 
   #hud-top-right { top: 14px; right: 14px; text-align: right; }
-  #hud-minimap { width: 180px; height: 180px; border: 2px solid #ff2d78;
+  #hud-minimap { width: 240px; height: 240px; border: 2px solid #ff2d78;
     border-radius: 8px; background: #171226; display: block; margin-left: auto; }
-  #hud-top-right .row { font-size: 15px; font-weight: 600; margin-top: 4px; }
+  #hud-top-right .row { font-size: 18px; font-weight: 600; margin-top: 4px; }
   #hud-radio { color: #ff2d78; }
   #hud-weapon { color: #ffd166; }
   #hud-condition { color: #7ee8fa; }
   #hud-respect { color: #a3e635; }
 
-  #hud-mission-box { left: 14px; bottom: 14px; max-width: 320px; }
-  #hud-mission { color: #ff2d78; font-size: 18px; font-weight: 800; letter-spacing: 1px; }
-  #hud-mission-sub { font-size: 14px; color: #e2e8f0; margin-top: 2px; }
+  #hud-mission-box { left: 14px; bottom: 14px; max-width: 380px; }
+  #hud-mission { color: #ff2d78; font-size: 22px; font-weight: 800; letter-spacing: 1px; }
+  #hud-mission-sub { font-size: 16px; color: #e2e8f0; margin-top: 2px; }
 
   #hud-dialog { left: 50%; bottom: 110px; transform: translateX(-50%);
     min-width: 320px; max-width: 560px; text-align: center; display: none; }
-  #hud-dialog-name { color: #22d3ee; font-weight: 800; font-size: 16px; margin-bottom: 2px; }
-  #hud-dialog-text { font-size: 15px; }
+  #hud-dialog-name { color: #22d3ee; font-weight: 800; font-size: 18px; margin-bottom: 2px; }
+  #hud-dialog-text { font-size: 17px; }
 
   #hud-speed-box { right: 14px; bottom: 14px; text-align: right; }
-  #hud-speed { font-size: 30px; font-weight: 800; color: #fff; }
-  #hud-speed small { font-size: 14px; color: #94a3b8; }
+  #hud-speed { font-size: 36px; font-weight: 800; color: #fff; }
+  #hud-speed small { font-size: 16px; color: #94a3b8; }
 
   #hud-toast { left: 50%; top: 70px; transform: translateX(-50%);
-    font-size: 17px; font-weight: 700; color: #ffd166; display: none;
+    font-size: 19px; font-weight: 700; color: #ffd166; display: none;
     background: rgba(23,18,38,.8); border: 1px solid rgba(255,209,102,.5);
     padding: 8px 18px; border-radius: 8px; }
 
@@ -73,20 +73,20 @@
   #wasted-screen h1 { color: #ef4444; text-shadow: 0 0 24px rgba(239,68,68,.8); }
 
   #garage-panel { position: fixed; z-index: 30; left: 50%; top: 50%;
-    transform: translate(-50%, -50%); width: 420px; max-width: 92vw;
+    transform: translate(-50%, -50%); width: 350px; max-width: 92vw;
     background: rgba(23,18,38,.95); border: 2px solid #22d3ee; border-radius: 14px;
-    padding: 20px; text-align: center; box-shadow: 0 0 30px rgba(34,211,238,.4); }
+    padding: 14px; text-align: center; box-shadow: 0 0 30px rgba(34,211,238,.4); }
   #garage-panel[hidden] { display: none; }
-  #garage-panel h3 { color: #22d3ee; letter-spacing: 3px; font-size: 22px; margin-bottom: 4px; }
-  #garage-panel p { font-size: 14px; color: #94a3b8; margin-bottom: 12px; }
-  .car-choice { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
-  .car-choice button { font-size: 15px; padding: 12px 8px; background: rgba(139,92,246,.35);
+  #garage-panel h3 { color: #22d3ee; letter-spacing: 3px; font-size: 19px; margin-bottom: 4px; }
+  #garage-panel p { font-size: 13px; color: #94a3b8; margin-bottom: 10px; }
+  .car-choice { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
+  .car-choice button { font-size: 14px; padding: 10px 8px; background: rgba(139,92,246,.35);
     border: 1px solid rgba(139,92,246,.7); box-shadow: none; }
   .car-choice button.selected { background: linear-gradient(90deg, #ff2d78, #8b5cf6);
     border-color: #ff2d78; }
-  .car-choice button small { display: block; font-size: 12px; font-weight: 400; color: #c4b5fd; margin-top: 3px; }
+  .car-choice button small { display: block; font-size: 11px; font-weight: 400; color: #c4b5fd; margin-top: 3px; }
   .garage-actions { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
-  .garage-actions button { font-size: 14px; padding: 9px 14px; }
+  .garage-actions button { font-size: 13px; padding: 8px 12px; }
   #garage-close { background: #334155; box-shadow: none; }
 </style>
 </head>
@@ -103,7 +103,7 @@
 
 <!-- HUD kanan atas -->
 <div id="hud-top-right" class="hud">
-  <canvas id="hud-minimap" width="180" height="180"></canvas>
+  <canvas id="hud-minimap" width="240" height="240"></canvas>
   <div class="row panel" id="hud-radio">NEON 99.1</div>
   <div class="row panel" id="hud-weapon">Pistol — ∞</div>
   <div class="row panel" id="hud-condition">KONDISI 100%</div>

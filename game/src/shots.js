@@ -1,11 +1,18 @@
-// shots.js — Screenshot preset — NEON BAY: SUNSET RUN (ronde 7, deepen)
-// Spec §9 + §17.5, restage B6 atas review DeepSeek (22 Nov ~11:20 WIB):
-// SHOT_PRESETS = ['cover','street','garage','mission'] — 'chase' dan 'drive'
-// lama dibuang. Tiap shot membuktikan kriteria BERBEDA; cover PALING PENTING:
-// LEBIH SEDIKIT, LEBIH BESAR, LEBIH TERBACA (tidak ada entity < ~40px di
-// frame 1280). Basis preset sama seperti R6; tiap preset MENEMPATKAN SECARA
-// DETERMINISTIK traffic + peds di dalam frustum kamera (10-70 m di depan
-// pemain); sisanya diparkir jauh supaya frame deterministik.
+// shots.js — Screenshot preset — NEON BAY: SUNSET RUN (ronde 8, legibility)
+// Spec §9 + §17.5, restage R8 atas diagnosis koordinator (22 Nov ~13:45 WIB):
+// SHOT_PRESETS = ['cover','street','garage','mission'] — tiap shot membuktikan
+// kriteria BERBEDA; cover PALING PENTING: LEBIH SEDIKIT, LEBIH BESAR, LEBIH
+// TERBACA (tidak ada entity < ~40px di frame 1280). Tiap preset MENEMPATKAN
+// SECARA DETERMINISTIK traffic + peds di dalam frustum kamera (10-70 m di
+// depan pemain); sisanya diparkir jauh supaya frame deterministik.
+//
+// R8 §2.2: shot 2 (street) BUKAN lagi ulang sudut jalan Strip seperti cover —
+// ini DOWNTOWN CANYON: jalan x=-156 di antara menara Downtown 26-60 m,
+// gedung tinggi + billboard + jendela pita menyala, pejalan kaki di kedua
+// trotoar. Ke-4 shot HARUS beda adegan: (1) Strip chase, (2) Downtown,
+// (3) garasi, (4) pier.
+// R8 §2.3: presetGarage — panel ramping 350 px di kiri-atas, kendaraan
+// diparkir di SISI KANAN frame supaya terlihat jelas di samping panel.
 
 export const SHOT_PRESETS = ['cover', 'street', 'garage', 'mission'];
 
@@ -126,6 +133,8 @@ function presetCover(game) {
   // COVER (sel terbesar, PALING PENTING): kejar-kejaran wanted 4 — LEBIH
   // SEDIKIT, LEBIH BESAR, LEBIH TERBACA. 1 cruiser DEKAT di belakang-kiri,
   // heli + searchlight, 1 MOBIL TERBAKAR di depan-kanan, beacon 60 m di depan.
+  // R8: jalan aspal + langit senja sudah terbaca via golden-hour; beacon
+  // kini pilar ramping + alas (render.js §2.7).
   const px = 0; const pz = 60; const heading = Math.PI;
   setPlayerCar(game, px, pz, heading, 18, 92, '#ff2d78', 'sedan');
   // Basis cover: 9/10 job selesai, respect 1240, RIFLE terpilih.
@@ -182,9 +191,12 @@ function presetCover(game) {
 }
 
 function presetStreet(game) {
-  // STREET (BARU, level jalan kaki): pemain JALAN KAKI di trotoar Strip,
-  // close-up — storefront + awning + neon sign, 4 peds besar, 2 traffic dekat.
-  const px = 7; const pz = 40; const heading = Math.PI; // utara, trotoar timur jalan x=0
+  // STREET R8 — DOWNTOWN CANYON (adegan BERBEDA dari cover, §2.2):
+  // pemain JALAN KAKI di jalan x=-156, di antara menara Downtown 26-60 m
+  // (bukan deret toko Strip rendah seperti cover). Gedung tinggi + billboard
+  // + pita jendela menyala di kedua sisi, trotoar terang, 5 peds besar di
+  // kedua trotoar, 3 traffic dekat. Kamera menghadap utara menyusuri canyon.
+  const px = -156; const pz = 40; const heading = Math.PI; // utara, jalan x=-156
   setPlayerOnFoot(game, px, pz, heading, 100);
   // Basis street: 7/10 job selesai, respect 800.
   game.state.money = 900;
@@ -198,25 +210,29 @@ function presetStreet(game) {
   game.missions.started = true;
   game.missions.timer = 150;
   game.missions.chainIndex = 0;
-  // Beacon ke penumpang pertama (arcade) — pilar jauh di kejauhan.
+  // Beacon ramping ke penumpang pertama (jauh di ujung canyon, utara).
   game.beacon.setPink();
-  game.beacon.set(26, 182, true);
-  // 2 traffic dekat (satu di samping pemain) + 1 mobil pink parkir.
+  game.beacon.set(-156, -104, true);
+  // 3 traffic dekat di jalan canyon (satu berlawanan arah di depan).
   placeSpots(game, 'traffic', px, pz, heading, [
-    { fwd: 3, lat: -4, heading: Math.PI },
-    { fwd: 25, lat: 1, heading: 0 },
-    { fwd: 32, lat: -2, speed: 0, color: '#ff2d78', model: 'sedan' },
+    { fwd: 6, lat: -3, heading: Math.PI },
+    { fwd: 25, lat: 2, heading: 0 },
+    { fwd: 34, lat: -2, speed: 0, color: '#22d3ee', model: 'sport' },
   ]);
-  // 4 peds besar di trotoar dekat pemain.
+  // 5 peds besar di kedua trotoar canyon (lat ±8 = trotoar x=-148/-164).
   placeSpots(game, 'peds', px, pz, heading, [
-    { fwd: 7, lat: 2 }, { fwd: 10, lat: 3 },
-    { fwd: 13, lat: 1 }, { fwd: 16, lat: 2.5 },
+    { fwd: 8, lat: 8 }, { fwd: 11, lat: -8 },
+    { fwd: 15, lat: 8 }, { fwd: 19, lat: -8 },
+    { fwd: 24, lat: 7 },
   ]);
   game.dialog.hide();
 }
 
 function presetGarage(game) {
-  // GARAGE (BARU, progresi): pemain di garage (-52,104), panel garasi TERBUKA.
+  // GARAGE (progresi): pemain di garage (-52,104), panel garasi TERBUKA.
+  // R8 §2.3: panel RAMPING 350 px di kiri-atas; kendaraan diparkir di
+  // SISI KANAN frame (lat +4..+7) supaya terlihat jelas di samping panel,
+  // bukan tertutup menu. Mobil kru pink di tengah + bike cyan + 2 sedan.
   const px = -52; const pz = 104; const heading = Math.PI; // utara, jalan x=-52
   setPlayerOnFoot(game, px, pz, heading, 100);
   // Basis garage: 9/10 job selesai, respect 1240 — HUD "MISI 9/10".
@@ -231,24 +247,21 @@ function presetGarage(game) {
   car.condition = 100;
   car.color = '#ff2d78';
   car.model = 'sedan';
-  // BIKE cyan + 2 mobil parkir berderet di dekat garage. Sedan hijau di
-  // fwd 26/lat 5 (bukan 29/-3): lebih dekat + sisi kanan, tidak menumpuk
-  // dengan sedan biru (22/-3) dan tetap terlihat besar di frame.
+  // BIKE cyan + 2 mobil parkir berderet di SISI KANAN (lat +), jauh dari panel kiri.
   placeSpots(game, 'traffic', px, pz, heading, [
-    { fwd: 16, lat: 4, speed: 0, model: 'bike', color: '#22d3ee' },
-    { fwd: 22, lat: -3, speed: 0, color: '#38bdf8', model: 'sedan' },
-    { fwd: 26, lat: 5, speed: 0, color: '#a3e635', model: 'sedan' },
+    { fwd: 14, lat: 5, speed: 0, model: 'bike', color: '#22d3ee' },
+    { fwd: 20, lat: 7, speed: 0, color: '#38bdf8', model: 'sedan' },
+    { fwd: 26, lat: 4, speed: 0, color: '#a3e635', model: 'sedan' },
   ]);
   // 0 peds (parkir semua jauh) — frame fokus ke panel + deret kendaraan.
   placeSpots(game, 'peds', px, pz, heading, []);
   // Panel garasi TERBUKA (#garage-panel terlihat: 4 pilihan + stats).
   if (game.garage && typeof game.garage.openPanel === 'function') game.garage.openPanel();
-  // Staging shot: geser panel ke kiri-atas (panel tengah 420px menutupi
-  // SEMUA kendaraan di tengah frame; panel di tengah-bawah juga menutupi
-  // kotak misi kiri-bawah) supaya deret kendaraan terlihat di kanan.
+  // Staging shot R8: panel ramping 350 px di kiri-atas (bukan tengah 420 px)
+  // supaya deret kendaraan di kanan + jalan + gedung terlihat.
   if (typeof document !== 'undefined') {
     const panel = document.getElementById('garage-panel');
-    if (panel) { panel.style.left = '16px'; panel.style.top = '140px'; panel.style.transform = 'none'; }
+    if (panel) { panel.style.width = '350px'; panel.style.left = '14px'; panel.style.top = '110px'; panel.style.transform = 'none'; }
   }
   game.dialog.hide();
 }
@@ -256,6 +269,7 @@ function presetGarage(game) {
 function presetMission(game) {
   // MISSION — PIER SHOOTOUT (combat): pemain jalan kaki di pier, 6 rival
   // TERLIHAT (besar, deterministik di dek), beacon pink, dialog Mira.
+  // R8: beacon kini pilar ramping + alas + ring luar (render.js §2.7).
   const pier = game.spawns.pier; // (225, 0)
   const px = pier.x - 10; const pz = pier.z + 5; // (215, 5)
   const heading = Math.PI / 2; // timur, ke ujung pier

@@ -1,8 +1,14 @@
-// NEON BAY: SUNSET RUN — world.js (R7 deepen)
+// NEON BAY: SUNSET RUN — world.js (R8 legibility)
 // Dunia 480x480: grid jalan, 5 distrik, pantai + pier + palem, skyline.
 // Spec §2 + §17.4 (fasad kaya: setback atap, rooftop props, jendela 4 sisi,
 // awning, lampu lalu lintas, billboard). Deterministik: mulberry32(20261121).
 // Semua mesh/prop WAJIB reuse geometry + material yang sama (§17.7c).
+//
+// R8 §2.1: tanah + jalan DITERANGKAN (aspal abu-abu gelap yang terbaca,
+// bukan hitam) + marka garis tengah + trotoar terang di tepi jalan.
+// R8 §2.5: jendela = buildLitWindowBands — PITA BESAR berkelompok
+// (2 baris x 2 segmen per fasad depan/belakang, 1 baris x 2 segmen di sisi),
+// sebagian menyala kuning hangat, sebagian gelap — BUKAN grid rapat.
 
 const THREE = window.THREE;
 
@@ -38,7 +44,7 @@ function sharedGeo() {
   if (GEO) return GEO;
   GEO = {
     unitBox: new THREE.BoxGeometry(1, 1, 1),
-    // Strip jendela: kotak tipis (lebar 1, tinggi 1, tebal 1) — diskala per sisi.
+    // Segmen pita jendela: kotak tipis — diskala per segmen (R8 §2.5).
     winStrip: new THREE.BoxGeometry(1, 1, 1),
     pole: new THREE.CylinderGeometry(0.09, 0.12, 1, 6),
     lampBall: new THREE.SphereGeometry(0.22, 8, 6),
@@ -55,21 +61,28 @@ function sharedMat() {
   const lambert = (c) => new THREE.MeshLambertMaterial({ color: c });
   const basic = (c) => new THREE.MeshBasicMaterial({ color: c });
   MAT = {
-    ground: lambert(0x35313d),
-    road: lambert(0x17141d),
+    // R8 §2.1: tanah mauve hangat + aspal abu-abu gelap TERBACA (dulu
+    // 0x35313d / 0x17141d — nyaris hitam di screenshot R7).
+    ground: lambert(0x4d4658),
+    road: lambert(0x3f3b47),
+    // R8 §2.1: marka garis tengah kuning pudar + trotoar abu hangat terang.
+    roadLine: lambert(0x9a7b2e),
+    sidewalk: lambert(0x5b5468),
     sand: lambert(0xd9b380),
     sea: new THREE.MeshLambertMaterial({ color: 0x1a6f9e, transparent: true, opacity: 0.85 }),
     pierWood: lambert(0x8a6a42),
     pierDark: lambert(0x6b4f30),
     trunk: lambert(0x6b4a2a),
     palmLeaf: lambert(0x2f7a3d),
-    skyline: lambert(0x1c1426),
+    skyline: lambert(0x2a2138),
     hill: lambert(0x1e3d24),
     roof: lambert(0x2a2430),
     setback: lambert(0x3a3444),
     acUnit: lambert(0x8a8f96),
     antenna: lambert(0x555a60),
     window: basic(0xffd27a),
+    // R8 §2.5: jendela gelap (tidak menyala) — kontras dengan yang menyala.
+    windowDark: lambert(0x232c3d),
     neonPink: basic(0xff2d78),
     neonCyan: basic(0x22d3ee),
     neonYellow: basic(0xfacc15),
@@ -101,6 +114,67 @@ function box(scene, geo, mat, x, y, z, sx, sy, sz, ry) {
   if (ry) m.rotation.y = ry;
   scene.add(m);
   return m;
+}
+
+// R8 §2.5 — buildLitWindowBands: jendela menyala sebagai PITA BESAR
+// berkelompok di keempat fasad gedung. Tiap fasad: 1-2 baris, tiap baris
+// 2 segmen lebar dengan celah di tengah; tiap segmen menyala (kuning
+// hangat, ~62%) atau gelap (kaca biru tua). Grid rapat DILARANG — jadi
+// noise saat contact sheet diperkecil; pita besar tetap terbaca.
+function buildLitWindowBands(scene, geo, mat, cx, cz, w, dep, h, rng) {
+  const bandH = Math.max(1.6, h * 0.16);
+  const seg = (x, y, z, sx, sy, sz) => {
+    const lit = rng() < 0.62;
+    box(scene, geo.winStrip, lit ? mat.window : mat.windowDark, x, y, z, sx, sy, sz);
+  };
+  // Fasad depan (+z) & belakang (-z): 2 baris x 2 segmen.
+  for (const rowY of [h * 0.32, h * 0.68]) {
+    for (const side of [-1, 1]) {
+      seg(cx + side * w * 0.21, rowY, cz + dep / 2 + 0.06, w * 0.36, bandH, 0.12);
+      seg(cx + side * w * 0.21, rowY, cz - dep / 2 - 0.06, w * 0.36, bandH, 0.12);
+    }
+  }
+  // Fasad kiri (-x) & kanan (+x): 2 baris x 2 segmen (sama seperti depan/
+  // belakang — fasad samping gedung tinggi Downtown juga harus hidup).
+  for (const rowY of [h * 0.32, h * 0.68]) {
+    for (const side of [-1, 1]) {
+      seg(cx - w / 2 - 0.06, rowY, cz + side * dep * 0.21, 0.12, bandH, dep * 0.36);
+      seg(cx + w / 2 + 0.06, rowY, cz + side * dep * 0.21, 0.12, bandH, dep * 0.36);
+    }
+  }
+}
+
+// R8 §2.1 — buildRoadMarkings: garis tengah kuning + trotoar terang di
+// kedua tepi tiap jalan, supaya jalan terbaca sebagai jalan (bukan void
+// hitam) dan tepi jalan jelas di thumbnail.
+function buildRoadMarkings(scene) {
+  const mat = sharedMat();
+  for (const p of ROAD_POS) {
+    // Garis tengah (searah X dan searah Z) — 0.3 m, pudar, tidak mendominasi foreground.
+    const lx = new THREE.Mesh(new THREE.PlaneGeometry(480, 0.3), mat.roadLine);
+    lx.rotation.x = -Math.PI / 2;
+    lx.position.set(0, 0.04, p);
+    lx.receiveShadow = true;
+    scene.add(lx);
+    const lz = new THREE.Mesh(new THREE.PlaneGeometry(0.3, 480), mat.roadLine);
+    lz.rotation.x = -Math.PI / 2;
+    lz.position.set(p, 0.04, 0);
+    lz.receiveShadow = true;
+    scene.add(lz);
+    // Trotoar terang di tepi jalan (lebar 3 m, offset +-7.5 m).
+    for (const off of [-7.5, 7.5]) {
+      const sx = new THREE.Mesh(new THREE.PlaneGeometry(480, 3), mat.sidewalk);
+      sx.rotation.x = -Math.PI / 2;
+      sx.position.set(0, 0.03, p + off);
+      sx.receiveShadow = true;
+      scene.add(sx);
+      const sz = new THREE.Mesh(new THREE.PlaneGeometry(3, 480), mat.sidewalk);
+      sz.rotation.x = -Math.PI / 2;
+      sz.position.set(p + off, 0.03, 0);
+      sz.receiveShadow = true;
+      scene.add(sz);
+    }
+  }
 }
 
 const NEON_SIGNS = ['neonPink', 'neonCyan', 'neonYellow', 'neonOrange', 'neonGreen', 'neonPurple'];
@@ -164,6 +238,8 @@ export const World = {
       rz.receiveShadow = true;
       scene.add(rz);
     }
+    // R8 §2.1: marka + trotoar supaya jalan terbaca.
+    buildRoadMarkings(scene);
 
     // --- Pantai timur: pasir + laut ---
     const sand = new THREE.Mesh(new THREE.PlaneGeometry(32, 480), mat.sand);
@@ -269,15 +345,8 @@ export const World = {
             scene.add(ant);
             box(scene, geo.lampBall, mat.lampRed, cx - w * 0.22, h + 4.6, cz + dep * 0.2, 1, 1, 1);
           }
-          // §17.4: strip jendela emissive di KEEMPAT sisi fasad.
-          const winY = h * 0.55;
-          const winH = Math.max(1.2, h * 0.28);
-          // Depan (+z) & belakang (-z).
-          box(scene, geo.winStrip, mat.window, cx, winY, cz + dep / 2 + 0.06, w * 0.8, winH, 0.12);
-          box(scene, geo.winStrip, mat.window, cx, winY, cz - dep / 2 - 0.06, w * 0.8, winH, 0.12);
-          // Kiri (-x) & kanan (+x).
-          box(scene, geo.winStrip, mat.window, cx - w / 2 - 0.06, winY, cz, 0.12, winH, dep * 0.8);
-          box(scene, geo.winStrip, mat.window, cx + w / 2 + 0.06, winY, cz, 0.12, winH, dep * 0.8);
+          // R8 §2.5: pita jendela besar berkelompok (ganti strip tunggal R7).
+          buildLitWindowBands(scene, geo, mat, cx, cz, w, dep, h, rng);
           // Neon sign: lantai dasar (y~3.2, terbaca kamera chase rendah) di
           // Strip/Arcade + di atas gedung.
           if (d === 'strip' || d === 'arcade') {

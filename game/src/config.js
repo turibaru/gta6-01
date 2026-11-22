@@ -1,5 +1,8 @@
-// NEON BAY: SUNSET RUN — config.js (R7 deepen)
-// Semua konstanta gameplay. Spec §3 + §17.2 (bike) + §17.3 (rifle).
+// NEON BAY: SUNSET RUN — config.js (R8 legibility)
+// Semua konstanta gameplay (R7 dipertahankan) + konstanta visual R8:
+// GOLDEN_HOUR (cahaya senja §2.1), MINIMAP_SIZE 240 (§2.6),
+// GARAGE_PANEL_WIDTH_PX 350 (§2.3), BEACON_SLIM_RADIUS (§2.7).
+// Spec §3 + §17.2 (bike) + §17.3 (rifle).
 
 export const CONFIG = {
   worldSize: 460,
@@ -55,7 +58,43 @@ export const CONFIG = {
   weaponRange: 90,
   meleeRange: 2.4,
   minimapRange: 130,
+  // R8 §2.6: minimap 180 -> 240 px (+33%) supaya legibel di contact sheet.
+  minimapSize: 240,
 };
+
+// R8 §2.1 — Cahaya golden-hour: matahari senja hangat + hemisphere terang
+// + ambient hangat + rim teal. Jalan aspal harus TERBACA (bukan hitam),
+// wajah gedung terlihat, langit senja bergradasi (sky dome di render.js).
+export const GOLDEN_HOUR = {
+  sunColor: 0xffb347,
+  sunIntensity: 1.6,
+  hemiSkyColor: 0xb07ac0,
+  hemiGroundColor: 0x4a2f28,
+  hemiIntensity: 1.05,
+  ambientColor: 0x7a5a7a,
+  ambientIntensity: 0.35,
+  rimColor: 0x67e8f9,
+  rimIntensity: 0.55,
+  // Langit senja: zenith indigo -> ungu -> oranye -> kuning horizon.
+  skyZenith: '#1c1445',
+  skyMid: '#6b2d6e',
+  skyLow: '#c65a3c',
+  skyHorizon: '#ff9e4f',
+  skyGlow: '#ffc46b',
+};
+
+// R8 §2.6 — ukuran minimap yang legibel (dipakai render.js + index.html).
+export const MINIMAP_SIZE = 240;
+
+// R8 §2.3 — panel garasi ~35% lebar layar 1280 (350 px), bukan ~50%,
+// supaya kendaraan + dunia terlihat di samping panel.
+export const GARAGE_PANEL_WIDTH_PX = 350;
+
+// R8 §2.7 — beacon dipersempit: pilar ramping + alas + ring di tanah,
+// supaya terbaca sebagai penanda objektif, bukan lempeng raksasa.
+export const BEACON_SLIM_RADIUS = 0.7;
+export const BEACON_BASE_RADIUS = 3.0;
+export const BEACON_OUTER_RING_RADIUS = 3.6;
 
 export const RESPECT_RANKS = [
   { name: 'Rookie', points: 0 },
