@@ -1,9 +1,17 @@
-// entities.js — Pemain, mobil, traffic, pejalan kaki, polisi, heli — GTA 6 R7
-// Spec §5 + §17.2/§17.7. player spawn (0,26); playerCar spawn (0,30) —
-// 4 m di depan player di jalan x=0 (pelajaran R6: spawn di garage
-// (-52,104) membuat E gagal di spawn). Bike: controller arcade SAMA seperti
-// mobil dengan parameter bike (speed 48, accel 26, steer 2.3, radius 1.2),
-// TAPI damage tabrakan untuk bike dikurangi 50% (§17.7a).
+// entities.js — Pemain, mobil, traffic, pejalan kaki, polisi, heli — GTA 6 R9 REBUILD
+// REBUILD FRESH dari base R7 (bukan copy R8). Spec §5 + §17.2/§17.7.
+// player spawn (0,26); playerCar spawn (0,30) — 4 m di depan player di
+// jalan x=0 (pelajaran R6: spawn di garage (-52,104) membuat E gagal di
+// spawn). Bike: controller arcade SAMA seperti mobil dengan parameter bike
+// (speed 48, accel 26, steer 2.3, radius 1.2), TAPI damage tabrakan untuk
+// bike dikurangi 50% (§17.7a).
+// DETERMINISME R9: traffic spawn pakai mulberry32(20261121); peds spawn
+// pakai mulberry32(20261121 + 99). JANGAN pakai Math.random untuk
+// layout/spawn — hasil spawn byte-identik di setiap run.
+// CATATAN R9: mulberry32 diimpor dari config.js (single source of truth).
+// Traffic/peds diposisikan absolut oleh shots.js (parkFar ke blok
+// barat-daya x/z ~ -208 + placeSpots); spawn di sini TIDAK menimpa posisi
+// yang sudah di-set preset shot — spawn hanya jalan di reset().
 // traffic 14, peds 22, police cruiser, heli, roadblocks.
 // enterCar/exitCar (E), damagePlayer/damageCar, nearestCar, toSyncList
 // (sertakan model + alt).
@@ -17,22 +25,18 @@ export const TRAFFIC_COLORS = [
 ];
 export const PED_COLORS = ['#f59e0b', '#38bdf8', '#a3e635', '#e2e8f0', '#f472b6', '#94a3b8', '#22d3ee', '#f43f5e'];
 
+import { mulberry32 } from './config.js';
+
+// Seed spawn deterministik R9 (satu sumber kebenaran untuk layout awal).
+export const TRAFFIC_SEED = 20261121;
+export const PED_SEED = 20261121 + 99;
+
 export const CAR_PARAMS = {
   sedan: { maxSpeed: 42, accel: 22, steer: 1.9, radius: 2.2, conditionMax: 100 },
   sport: { maxSpeed: 48, accel: 26, steer: 2.1, radius: 2.2, conditionMax: 100 },
   truck: { maxSpeed: 36, accel: 18, steer: 1.6, radius: 2.6, conditionMax: 120 },
   bike: { maxSpeed: 48, accel: 26, steer: 2.3, radius: 1.2, conditionMax: 60 },
 };
-
-function mulberry32(seed) {
-  let a = seed >>> 0;
-  return function () {
-    a |= 0; a = (a + 0x6D2B79F5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
 
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 function dist2d(ax, az, bx, bz) { return Math.hypot(ax - bx, az - bz); }
@@ -93,9 +97,9 @@ export class Entities {
     return this.player;
   }
 
-  // --- spawn ---
+  // --- spawn (deterministik: seed tetap, tanpa Math.random) ---
   spawnTraffic(n = 14) {
-    const rng = mulberry32(20261121);
+    const rng = mulberry32(TRAFFIC_SEED);
     for (let i = 0; i < n; i++) {
       const alongRoad = rng() < 0.5;
       const road = pickRoad(rng);
@@ -116,7 +120,7 @@ export class Entities {
   }
 
   spawnPeds(n = 22) {
-    const rng = mulberry32(777);
+    const rng = mulberry32(PED_SEED);
     for (let i = 0; i < n; i++) {
       // Di trotoar: 7-9 m dari sumbu jalan terdekat, jangan di tengah jalan.
       const road = pickRoad(rng);

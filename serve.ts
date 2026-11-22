@@ -1,4 +1,5 @@
 // serve.ts — server file statis untuk game NEON BAY: SUNSET RUN.
+// Ronde 9 rebuild (base R7, dirapikan — perilaku serving tidak berubah).
 // Node 22 stdlib saja. Root = game/ di sebelah file ini.
 // PORT env (default 8080), listen 127.0.0.1.
 import { createReadStream, existsSync, statSync } from 'node:fs';

@@ -1,13 +1,16 @@
-// main.js — NEON BAY: SUNSET RUN (ronde 7, deepen)
-// Class Game (§7 + §17.1/§17.2/§17.3). Boot, loop, HUD, kontrol global,
-// misi, wanted, save/load. window.__neonBay diset SEAWAL MUNGKIN (§16b).
-// Wiring eksplisit: tiap sistem dibangun dengan deps yang dibutuhkannya
-// (B2 tidak mengimpor config.js — jangan andalkan konstanta bersama).
-// Garage: `garage.open` adalah BOOLEAN; buka/tutup via openPanel() /
-// closePanel() / toggle() — JANGAN panggil garage.open() sebagai fungsi.
+// main.js — NEON BAY: SUNSET RUN (R9 legibility rebuild)
+// Fresh composition from the R7 design spec + R8 legibility values. No credentials, no secrets, no external requests.
+// Class Game (§7). Boot, loop, HUD, kontrol global, misi, wanted, save/load.
+// window.__neonBay diset SEAWAL MUNGKIN (§16b). Wiring eksplisit: tiap
+// sistem dibangun dengan deps yang dibutuhkannya. Garage: `garage.open`
+// adalah BOOLEAN; buka/tutup via openPanel() / closePanel() / toggle() —
+// JANGAN panggil garage.open() sebagai fungsi.
+// Loop: render jalan tiap frame termasuk saat frozen; kamera chase snap
+// sampai settle; HUD di-update lewat _updateHUD() + cache _hud(id);
+// minimap menerima label distrik (this.minimapDistrict).
 
 import { CONFIG, WEAPON_ORDER, clamp, dist2d } from './config.js';
-import { World } from './world.js';
+import { World, districtLabel } from './world.js';
 import { Entities } from './entities.js';
 import { Heat } from './heat.js';
 import { Weapons } from './weapons.js';
@@ -38,6 +41,8 @@ export class Game {
     this.stateName = 'title'; // 'title' | 'play' | 'pause' | 'wasted'
     this.frozen = false;
     this.shotMode = null;
+    this.minimapDistrict = 'STRIP';
+    this._cameraSettled = false;
     this._lastTs = 0;
     this._rafId = 0;
     this._toastTimer = null;
@@ -128,6 +133,7 @@ export class Game {
     };
     this._prevX = this.entities.player.x;
     this._prevZ = this.entities.player.z;
+    this.minimapDistrict = districtLabel(this.entities.player.x, this.entities.player.z);
 
     // Garasi: wiring tombol panel (B2 hanya me-wire [data-car] + close).
     if (typeof this.garage.bindPanel === 'function') {
@@ -466,6 +472,9 @@ export class Game {
     this._prevZ = p.z;
     if (p.inCar && car) this.state.score += Math.round(moved);
 
+    // Label distrik minimap mengikuti posisi pemain.
+    this.minimapDistrict = districtLabel(p.x, p.z);
+
     // Wasted (HP 0) & busted (polisi menangkap).
     if (p.hp <= 0) {
       this._onWasted();
@@ -522,11 +531,16 @@ export class Game {
     if (!this.renderer || !this.entities) return;
     const p = this.entities.player;
     const car = this.entities.playerCar;
+    // Kamera chase: snap sampai kamera settle (frame pertama / frozen),
+    // sesudahnya lerp halus. Di mode frozen snap selalu true.
+    const settled = this._cameraSettled;
     this.renderer.setChaseCamera(
       p.x, p.z, p.heading,
       p.inCar ? 'car' : 'foot',
-      snap === true,
+      !settled,
     );
+    if (!settled) this._cameraSettled = true;
+    void snap;
     this.renderer.syncEntities(this._syncList());
     this.renderer.setBeacon(
       this.beacon.x, this.beacon.z, this.beacon.visible,
@@ -542,7 +556,7 @@ export class Game {
         if (r.alive !== false) blips.push({ x: r.x, z: r.z, kind: 'rival' });
       }
     }
-    this.renderer.updateMinimap(p.x, p.z, p.heading, blips);
+    this.renderer.updateMinimap(p.x, p.z, p.heading, blips, this.minimapDistrict);
     this.renderer.render(dt);
   }
 

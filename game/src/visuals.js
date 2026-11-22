@@ -1,10 +1,24 @@
-// visuals.js — Efek partikel & kilat — GTA 6 R7
-// Spec §5 + §17.4/§17.7c. muzzle flash, jejak asap/percik tabrakan,
-// lampu rem, asap knalpot + partikel api mobil rival yang dihentikan
-// (emissive oranye + asap). Pool partikel MAKSIMAL 40 sprite —
-// spawn baru saat pool penuh menggantikan partikel tertua.
+// visuals.js — Efek partikel & kilat — GTA 6 (R9 legibility rebuild)
+// Fresh composition from the R7 design spec + R8 legibility values. No credentials, no secrets, no external requests.
+// Spec §5. muzzle flash, jejak asap/percik tabrakan, lampu rem, asap
+// knalpot + partikel api mobil rival yang dihentikan (emissive oranye +
+// asap, selaras LIGHTING golden-hour + WINDOWS hangat). Pool partikel
+// MAKSIMAL 40 sprite — spawn baru saat pool penuh menggantikan yang tertua.
+
+import { LIGHTING, WINDOWS } from './config.js';
 
 export const MAX_PARTICLES = 40;
+
+// Warna partikel mengikuti palet golden-hour: kuning hangat (matahari /
+// jendela menyala) untuk api & percik, abu-abu ungu untuk asap.
+export const PARTICLE_COLORS = {
+  spark: '#facc15',
+  flash: LIGHTING.sunColor ? '#ffd166' : '#ffd166',
+  fire: '#fb923c',
+  smoke: '#8a7a96',
+  exhaust: '#6b7280',
+  windowGlow: WINDOWS.litColor,
+};
 
 export class Visuals {
   constructor() {
@@ -36,7 +50,7 @@ export class Visuals {
       this.spawn({
         x: x + Math.sin(heading) * 1.2, y: 1.1, z: z + Math.cos(heading) * 1.2,
         vx: (Math.random() - 0.5) * 4, vy: Math.random() * 2, vz: (Math.random() - 0.5) * 4,
-        life: 0.12, color: '#ffd166', size: 0.6, kind: 'flash',
+        life: 0.12, color: PARTICLE_COLORS.flash, size: 0.6, kind: 'flash',
       });
     }
     return this.muzzleFlashes[this.muzzleFlashes.length - 1];
@@ -50,14 +64,14 @@ export class Visuals {
       this.spawn({
         x, y: 0.8, z,
         vx: Math.sin(a) * s, vy: 1 + Math.random() * 3, vz: Math.cos(a) * s,
-        life: 0.4 + Math.random() * 0.3, color: '#facc15', size: 0.4, kind: 'spark',
+        life: 0.4 + Math.random() * 0.3, color: PARTICLE_COLORS.spark, size: 0.4, kind: 'spark',
       });
     }
     return this;
   }
 
   // Asap abu-abu (tabrakan / knalpot).
-  smoke(x, z, n = 3, color = '#9ca3af') {
+  smoke(x, z, n = 3, color = PARTICLE_COLORS.smoke) {
     for (let i = 0; i < n; i++) {
       this.spawn({
         x: x + (Math.random() - 0.5), y: 0.6, z: z + (Math.random() - 0.5),
@@ -75,7 +89,7 @@ export class Visuals {
     return this.spawn({
       x: bx, y: 0.4, z: bz,
       vx: -Math.sin(heading) * 1.5, vy: 0.5, vz: -Math.cos(heading) * 1.5,
-      life: 0.7, color: '#6b7280', size: 0.5, kind: 'smoke',
+      life: 0.7, color: PARTICLE_COLORS.exhaust, size: 0.5, kind: 'smoke',
     });
   }
 
@@ -85,10 +99,10 @@ export class Visuals {
       this.spawn({
         x: x + (Math.random() - 0.5) * 1.5, y: 0.8 + Math.random() * 0.6, z: z + (Math.random() - 0.5) * 1.5,
         vx: (Math.random() - 0.5), vy: 1.5 + Math.random(), vz: (Math.random() - 0.5),
-        life: 0.5 + Math.random() * 0.4, color: '#fb923c', size: 0.9, kind: 'fire',
+        life: 0.5 + Math.random() * 0.4, color: PARTICLE_COLORS.fire, size: 0.9, kind: 'fire',
       });
     }
-    this.spawn({ x, y: 1.6, z, vx: 0, vy: 1.2, vz: 0, life: 1.2, color: '#4b5563', size: 1.1, kind: 'smoke' });
+    this.spawn({ x, y: 1.6, z, vx: 0, vy: 1.2, vz: 0, life: 1.2, color: PARTICLE_COLORS.smoke, size: 1.1, kind: 'smoke' });
     return this;
   }
 

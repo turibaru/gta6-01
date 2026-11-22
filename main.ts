@@ -1,4 +1,5 @@
 // main.ts — entrypoint build dossier untuk bounty make.fun gta6-01.
+// Ronde 9 rebuild "NEON BAY: SUNSET RUN" (base R7, dari design spec R8).
 // Node 22 stdlib saja, erasable TypeScript, jalan langsung `node main.ts`.
 // Menyalin game/ + screenshots/ dari repo ke output dir (env
 // MAKEFUN_OUTPUT_DIR, default /output), lalu menulis dossier.json via

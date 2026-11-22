@@ -4,9 +4,11 @@
 
 Dibuat untuk bounty [gta6-01 di make.fun](https://make.fun/bounty/gta6-01) — game open-world 3D, hadiah $1.666.
 
-# NEON BAY: SUNSET RUN — 3D
+# NEON BAY: SUNSET RUN — 3D (Ronde 9)
 
 Game open-world 3D di kota pantai fiktif **Neon Bay** saat golden hour. Bantu kru Mira & Rico menyelesaikan **10 story job** berurutan — dari antar paket di pier, kabur dari kejaran NBPD, balapan jalanan, heist arcade, sampai perburuan paket terakhir — lalu free-roam di kota yang hidup: lalu lintas, pejalan kaki, polisi dengan wanted 0–5 bintang, cruiser, roadblock, dan heli.
+
+Ronde 9 menajamkan **keterbacaan screenshot**: 4 distrik terbaca jelas di minimap — **STRIP** (kejar-kejaran wanted 4 bintang), **DOWNTOWN** (canyon menara), **ARCADE** (cruise tenang di wide street, shot 3 baru), dan **BEACH** (misi PIER SHOOTOUT). HUD diperbesar, beacon ramping, jendela pita berkelompok.
 
 Semua visual geometri prosedural (three.js), semua suara disintesis WebAudio — tanpa aset eksternal, jalan offline dari file statis.
 
@@ -48,7 +50,7 @@ node serve.ts
 
 ```sh
 node serve.ts            # terminal 1 — server di :8080
-node tools/shot.mjs cover street garage mission   # 4 screenshot 1280x720 ke screenshots/
+node tools/shot.mjs cover street avenue mission   # 4 screenshot 1280x720 ke screenshots/
 node tools/shot.mjs --playtest                  # 15 langkah playtest
 node tools/smoke.mjs                            # 18 checks, keluar 0 bila semua PASS
 ```
@@ -80,5 +82,5 @@ tools/
   shot.mjs         # driver screenshot + playtest via headless Chromium (CDP)
   smoke.mjs        # harness 18 checks
 screenshots/
-  1-cover.jpg  2-street.jpg  3-garage.jpg  4-mission.jpg
+  1-cover.jpg  2-street.jpg  3-avenue.jpg  4-mission.jpg
 ```

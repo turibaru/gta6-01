@@ -1,8 +1,12 @@
-// missions.js — NEON BAY: SUNSET RUN (ronde 7, deepen)
+// missions.js — NEON BAY: SUNSET RUN (ronde 9, rebuild)
+// REBUILD FRESH dari base R7 (bukan copy R8).
 // 10 story job berurutan (§4 + §17.1 design spec). Tipe stage:
 // goto | escape | kill | channel | race | chain | kill-cars.
 // Misi 1-7 = R6; misi 8 TAXI FARE (chain), 9 VIGILANTE (kill-cars),
 // 10 NEON HUNT (chain pickup). NEON LEGEND diraih di misi 10, bukan misi 7.
+// PERUBAHAN R9: defs[3] PIER SHOOTOUT timer 150 -> 132 (sesuai staging
+// shot mission yang dipakai shots.js); reset() baru untuk shot avenue
+// (cruise tanpa misi: active=null, started=false, semua state per-misi nol).
 
 import { CONFIG, clamp, dist2d } from './config.js';
 
@@ -75,7 +79,7 @@ export class Missions {
       },
       {
         id: 4, name: 'PIER SHOOTOUT', giver: 'Rico', payout: 700, respect: 80,
-        timer: 150, rivals: 6,
+        timer: 132, rivals: 6,
         brief: 'Kru rival menyerang di pier. Kalahkan 6 rival, lalu capai mobil extraction.',
         stages: [
           { type: 'kill', spawn: 'pier', fallback: { x: 225, z: 0 }, count: 6, label: 'Kalahkan rival di pier' },
@@ -147,6 +151,24 @@ export class Missions {
     this.nextGate = 0;       // race (misi 5): gate berikutnya
     this.playerLap = 0;      // race: lap pemain
     this._lastEvent = null;
+  }
+
+  // Reset penuh ke "tanpa misi" — dipakai shot avenue (cruise tanpa misi)
+  // dan applyBasis shots.js (yang sebelumnya men-set field satu per satu).
+  // TIDAK mengubah `completed` (progres job tetap untuk HUD).
+  reset() {
+    this.active = null;
+    this.started = false;
+    this.stageIndex = 0;
+    this.timer = 0;
+    this.chainIndex = 0;
+    this.collected = [];
+    this.stoppedCount = 0;
+    this.channelT = 0;
+    this.nextGate = 0;
+    this.playerLap = 0;
+    this._lastEvent = null;
+    return this;
   }
 
   // Misi berikutnya (berurutan). null bila semua 10 selesai.

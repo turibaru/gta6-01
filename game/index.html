@@ -16,38 +16,41 @@
   .panel { background: rgba(23, 18, 38, 0.72); border: 1px solid rgba(255,45,120,.45);
     border-radius: 10px; padding: 10px 14px; backdrop-filter: blur(2px); }
 
+  /* HUD R8 (HUD_FONT_SIZES di config.js): money 26, score/jobs 18,
+     wanted 27, pill radio/weapon/condition/respect 18. */
   #hud-top-left { top: 14px; left: 14px; }
-  #hud-top-left .row { font-size: 20px; font-weight: 700; margin-bottom: 2px; }
-  #hud-money { color: #a3e635; }
-  #hud-score { color: #e2e8f0; font-size: 15px !important; }
-  #hud-jobs { color: #22d3ee; font-size: 15px !important; }
-  #hud-wanted { color: #ffd166; letter-spacing: 2px; font-size: 22px !important; }
-  #hud-wanted .star-off { color: #4b4360; }
+  #hud-top-left .row { font-size: 18px; font-weight: 700; margin-bottom: 2px; }
+  #hud-money { color: #ffd166; font-size: 26px !important; }
+  #hud-score { color: #e2e8f0; font-size: 18px !important; }
+  #hud-jobs { color: #7ee8fa; font-size: 18px !important; }
+  #hud-wanted { color: #ffd166; letter-spacing: 2px; font-size: 27px !important; }
+  #hud-wanted .star-off { color: rgba(226,232,240,0.35); }
 
   #hud-top-right { top: 14px; right: 14px; text-align: right; }
-  #hud-minimap { width: 180px; height: 180px; border: 2px solid #ff2d78;
-    border-radius: 8px; background: #171226; display: block; margin-left: auto; }
-  #hud-top-right .row { font-size: 15px; font-weight: 600; margin-top: 4px; }
+  #hud-minimap { width: 240px; height: 240px; border: 2px solid #ff2d78;
+    border-radius: 10px; background: #241f33; display: block; margin-left: auto; }
+  #hud-top-right .row { font-size: 18px; font-weight: 600; margin-top: 4px; }
   #hud-radio { color: #ff2d78; }
   #hud-weapon { color: #ffd166; }
   #hud-condition { color: #7ee8fa; }
   #hud-respect { color: #a3e635; }
 
-  #hud-mission-box { left: 14px; bottom: 14px; max-width: 320px; }
-  #hud-mission { color: #ff2d78; font-size: 18px; font-weight: 800; letter-spacing: 1px; }
-  #hud-mission-sub { font-size: 14px; color: #e2e8f0; margin-top: 2px; }
+  #hud-mission-box { left: 12px; bottom: 12px; max-width: 320px; background: rgba(12, 8, 24, 0.72); border: 1px solid rgba(34, 211, 238, 0.45); border-radius: 10px; padding: 10px 14px; }
+  #hud-banner { font-size: 22px; font-weight: 800; color: #ff2d78; text-shadow: 0 2px 6px rgba(0,0,0,0.9); }
+  #hud-mission { color: #ffd166; font-size: 20px; font-weight: 800; letter-spacing: 1px; }
+  #hud-mission-sub { font-size: 18px; color: #e2e8f0; margin-top: 2px; }
 
   #hud-dialog { left: 50%; bottom: 110px; transform: translateX(-50%);
     min-width: 320px; max-width: 560px; text-align: center; display: none; }
-  #hud-dialog-name { color: #22d3ee; font-weight: 800; font-size: 16px; margin-bottom: 2px; }
-  #hud-dialog-text { font-size: 15px; }
+  #hud-dialog-name { color: #ff2d78; font-weight: 800; font-size: 20px; margin-bottom: 2px; }
+  #hud-dialog-text { font-size: 18px; }
 
   #hud-speed-box { right: 14px; bottom: 14px; text-align: right; }
-  #hud-speed { font-size: 30px; font-weight: 800; color: #fff; }
-  #hud-speed small { font-size: 14px; color: #94a3b8; }
+  #hud-speed { font-size: 36px; font-weight: 800; color: #fff; }
+  #hud-speed small { font-size: 18px; color: #94a3b8; }
 
   #hud-toast { left: 50%; top: 70px; transform: translateX(-50%);
-    font-size: 17px; font-weight: 700; color: #ffd166; display: none;
+    font-size: 18px; font-weight: 700; color: #ffd166; display: none;
     background: rgba(23,18,38,.8); border: 1px solid rgba(255,209,102,.5);
     padding: 8px 18px; border-radius: 8px; }
 
@@ -58,7 +61,7 @@
   .screen[hidden] { display: none; }
   .screen h1 { font-size: 64px; letter-spacing: 6px; color: #ff2d78;
     text-shadow: 0 0 24px rgba(255,45,120,.8), 0 2px 0 #7c1030; }
-  .screen h2 { font-size: 30px; letter-spacing: 10px; color: #22d3ee;
+  .screen h2 { font-size: 28px; letter-spacing: 10px; color: #22d3ee;
     text-shadow: 0 0 18px rgba(34,211,238,.8); margin-bottom: 14px; }
   .screen p { max-width: 620px; font-size: 16px; line-height: 1.6; color: #e2e8f0; }
   .screen .controls { margin: 18px 0; font-size: 14px; line-height: 1.9; color: #c4b5fd;
@@ -72,10 +75,13 @@
   button:hover { filter: brightness(1.15); }
   #wasted-screen h1 { color: #ef4444; text-shadow: 0 0 24px rgba(239,68,68,.8); }
 
-  #garage-panel { position: fixed; z-index: 30; left: 50%; top: 50%;
-    transform: translate(-50%, -50%); width: 420px; max-width: 92vw;
-    background: rgba(23,18,38,.95); border: 2px solid #22d3ee; border-radius: 14px;
-    padding: 20px; text-align: center; box-shadow: 0 0 30px rgba(34,211,238,.4); }
+  /* Panel garasi R8: 350px (~27% layar, sinkron GARAGE_PANEL_WIDTH),
+     kiri layar supaya dunia tetap terlihat di samping panel. */
+  #garage-panel { position: fixed; z-index: 30; left: 24px; top: 50%;
+    transform: translateY(-50%); width: 350px; max-width: 90vw;
+    background: rgba(12,8,24,0.92); border: 2px solid #ff2d78; border-radius: 14px;
+    padding: 18px; text-align: center; box-shadow: 0 0 30px rgba(255,45,120,.4);
+    display: none; }
   #garage-panel[hidden] { display: none; }
   #garage-panel h3 { color: #22d3ee; letter-spacing: 3px; font-size: 22px; margin-bottom: 4px; }
   #garage-panel p { font-size: 14px; color: #94a3b8; margin-bottom: 12px; }
@@ -103,7 +109,7 @@
 
 <!-- HUD kanan atas -->
 <div id="hud-top-right" class="hud">
-  <canvas id="hud-minimap" width="180" height="180"></canvas>
+  <canvas id="hud-minimap" width="240" height="240"></canvas>
   <div class="row panel" id="hud-radio">NEON 99.1</div>
   <div class="row panel" id="hud-weapon">Pistol — ∞</div>
   <div class="row panel" id="hud-condition">KONDISI 100%</div>
@@ -112,6 +118,7 @@
 
 <!-- HUD misi kiri bawah -->
 <div id="hud-mission-box" class="hud panel">
+  <div id="hud-banner"></div>
   <div id="hud-mission">NEON BAY</div>
   <div id="hud-mission-sub">Pergi ke garage dan tekan ENTER untuk mulai job pertama.</div>
 </div>

@@ -1,6 +1,8 @@
-// dialog.js — Dialog / briefing HUD — GTA 6 R7
-// Spec §5. Tampil di #hud-dialog (#hud-dialog-name + #hud-dialog-text),
-// auto-hide setelah `seconds`. queue() menumpuk dialog berurutan.
+// dialog.js — Dialog / briefing HUD — NEON BAY: SUNSET RUN (ronde 9)
+// REBUILD FRESH dari base R7 (bukan copy R8). Spec §5. Tampil di
+// #hud-dialog (#hud-dialog-name + #hud-dialog-text), auto-hide setelah
+// `seconds`. Dialog shot R9 memakai durasi 8 detik (lihat shots.js).
+// queue() menumpuk dialog berurutan; hide() menampilkan antrean berikut.
 
 export class Dialog {
   constructor() {

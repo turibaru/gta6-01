@@ -1,6 +1,11 @@
-// rivals.js — Rival: shootout, balapan, getaway (misi 9) — GTA 6 R7
-// Spec §5 + §17.1/§17.7. spawnShootout(x,z,n), spawnRace(gates,x,z),
-// clear() + spawnGetawayCars(4) untuk misi 9: 4 mobil rival condition 60
+// rivals.js — Rival: shootout, balapan, getaway (misi 9) — GTA 6 R9 REBUILD
+// REBUILD FRESH dari base R7 (bukan copy R8): formasi shootout ditulis ulang
+// jadi grid deterministik 2 kolom x 3 baris di dek pier — jarak antar rival
+// selalu >= 5 m, semua menghadap BARAT (ke arah pemain), tanpa Math.random
+// di file ini. Posisi berasal dari parameter (pierX, pierZ) + offset tetap,
+// jadi hasil spawn byte-identik di setiap run.
+// Spec: spawnShootout(x,z,n), spawnRace(gates,x,z), clear() +
+// spawnGetawayCars(4) untuk misi 9: 4 mobil rival condition 60
 // (rifle 1 hit, pistol 2 hit, smg 4 hit), kecepatan kabur 12-14, tetap di
 // jalan grid, rute loop di Strip agar bisa dicegat, JANGAN despawn.
 // Rival menembak pemain; kill stage menghitung defeatedCount; misi 9
@@ -8,15 +13,22 @@
 
 export const ROAD_POS = [-208, -156, -104, -52, 0, 52, 104, 156, 208];
 
-function mulberry32(seed) {
-  let a = seed >>> 0;
-  return function () {
-    a |= 0; a = (a + 0x6D2B79F5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
+// Arah hadap barat: pemain mendekati pier dari barat, jadi rival menoleh
+// ke barat (heading -PI/2 dalam konvensi atan2(dx, dz) game ini).
+export const HEADING_WEST = -Math.PI / 2;
+
+// Formasi shootout R9: 2 kolom (jarak 6 m antar kolom) x 3 baris
+// (jarak 6 m antar baris) — jarak antar rival terdekat selalu 6 m (>= 5 m).
+// Kolom pertama 4 m di timur titik pier, kolom kedua 10 m di timur titik.
+// Offset z baris: -6, 0, +6 relatif ke pierZ.
+const SHOOTOUT_FORMATION = [
+  { dx: 4, dz: -6 },
+  { dx: 4, dz: 0 },
+  { dx: 4, dz: 6 },
+  { dx: 10, dz: -6 },
+  { dx: 10, dz: 0 },
+  { dx: 10, dz: 6 },
+];
 
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
@@ -48,16 +60,17 @@ export class Rivals {
     return this;
   }
 
+  // R9: formasi grid deterministik — bukan cincin acak. n <= 6 memakai
+  // slot formasi pertama; n > 6 mengulang baris dengan kolom ketiga (+16 m).
   spawnShootout(x, z, n = 6) {
-    const rng = mulberry32(20261121 + Math.floor(x) + Math.floor(z));
     for (let i = 0; i < n; i++) {
-      const a = rng() * Math.PI * 2;
-      const r = 6 + rng() * 14;
+      const slot = SHOOTOUT_FORMATION[i % SHOOTOUT_FORMATION.length];
+      const extraCol = Math.floor(i / SHOOTOUT_FORMATION.length) * 12;
       this.list.push({
         kind: 'shooter',
-        x: clamp(x + Math.sin(a) * r, -235, 235),
-        z: clamp(z + Math.cos(a) * r, -235, 235),
-        heading: rng() * Math.PI * 2,
+        x: clamp(x + slot.dx + extraCol, -235, 235),
+        z: clamp(z + slot.dz, -235, 235),
+        heading: HEADING_WEST, // menghadap pemain (barat)
         hp: 100,
         alive: true,
         speed: 3.5,

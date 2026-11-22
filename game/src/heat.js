@@ -1,7 +1,11 @@
-// heat.js — Wanted / Heat (NBPD) — GTA 6 R7 "NEON BAY: SUNSET RUN"
-// Spec §5 + §3 (CONFIG). value 0..100, stars = floor(value/20) (0-5).
+// heat.js — Wanted / Heat (NBPD) — GTA 6 R9 REBUILD
+// REBUILD FRESH dari base R7 (bukan copy R8). Spec §5 + §3 (CONFIG).
+// value 0..100, stars = floor(value/20) (0-5).
 // Naik: curi mobil +12, tabrak pejalan kaki +18, menembak +10,
 // ngebut dekat polisi +6. Turun 2.2/dtk (jauh dari polisi), 7/dtk di hideout.
+// setStars(n) mengunci bintang: setStars(4) untuk shot cover (wanted 4 +
+// heli), setStars(0) / clear() untuk shot avenue (cruise tanpa wanted).
+// Nilai bintang selalu dijepit 0..5 — pemanggil tak perlu clamp sendiri.
 
 export const HEAT_MAX = 100;
 export const HEAT_PER_STAR = 20;
@@ -28,6 +32,8 @@ export class Heat {
     return this.stars;
   }
 
+  // Kunci bintang 0..5 (clamp + floor). Mengembalikan value baru.
+  // setStars(4) -> value 80 (cover, heli aktif); setStars(0) -> 0 (avenue).
   setStars(n) {
     const s = Math.max(0, Math.min(5, Math.floor(n) || 0));
     this.value = s * HEAT_PER_STAR;

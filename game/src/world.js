@@ -1,26 +1,37 @@
-// NEON BAY: SUNSET RUN — world.js (R7 deepen)
+// NEON BAY: SUNSET RUN — world.js (R9 legibility rebuild)
+// Fresh composition from the R7 design spec + R8 legibility values. No credentials, no secrets, no external requests.
 // Dunia 480x480: grid jalan, 5 distrik, pantai + pier + palem, skyline.
-// Spec §2 + §17.4 (fasad kaya: setback atap, rooftop props, jendela 4 sisi,
-// awning, lampu lalu lintas, billboard). Deterministik: mulberry32(20261121).
-// Semua mesh/prop WAJIB reuse geometry + material yang sama (§17.7c).
+// Kota deterministik: mulberry32(CONFIG.seed). Gedung downtown TINGGI
+// (menara 26-60 m -> canyon); jendela PITA BESAR berkelompok (WINDOWS:
+// 2 baris x 2 segmen, ~62% menyala) — bukan grid rapat, cegah aliasing.
+// Semua mesh/prop WAJIB reuse geometry + material yang sama.
 
 const THREE = window.THREE;
 
-export const SEED = 20261121;
+import { CONFIG, ROAD_COLOR, SIDEWALK_COLOR, GROUND_COLOR, WINDOWS, SKY_GRADIENT, mulberry32 } from './config.js';
+
+export const SEED = CONFIG.seed;
 export const ROAD_POS = [-208, -156, -104, -52, 0, 52, 104, 156, 208];
 export const BLOCK_CENTERS = [-182, -130, -78, -26, 26, 78, 130, 182];
 export const WORLD_HALF = 230;
 
-export function mulberry32(seed) {
-  let a = seed >>> 0;
-  return function () {
-    a |= 0;
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
+// Warna fasad per distrik — arcade hangat kecoklatan, downtown biru baja.
+export const BUILDING_COLORS = {
+  downtown: 0x5a6b8a,
+  strip: 0xc9a0a0,
+  arcade: 0x8a7a6a,
+  hills: 0xa8c9a0,
+  beach: 0xc9b8a0,
+};
+
+// Anchor distrik arcade (dipakai spawn + misi).
+export const DISTRICT_ANCHORS = {
+  downtown: { x: -182, z: 0 },
+  strip: { x: 0, z: 26 },
+  arcade: { x: 26, z: 182 },
+  hills: { x: 0, z: -182 },
+  beach: { x: 208, z: 0 },
+};
 
 export function districtOf(bx, bz) {
   if (bx >= 130) return 'beach';
@@ -28,6 +39,10 @@ export function districtOf(bx, bz) {
   if (bz >= 130) return 'arcade';
   if (bz <= -130) return 'hills';
   return 'strip';
+}
+
+export function districtLabel(x, z) {
+  return districtOf(x, z).toUpperCase();
 }
 
 // Geometry + material bersama — dibuat sekali, dipakai semua gedung/prop.
@@ -38,7 +53,7 @@ function sharedGeo() {
   if (GEO) return GEO;
   GEO = {
     unitBox: new THREE.BoxGeometry(1, 1, 1),
-    // Strip jendela: kotak tipis (lebar 1, tinggi 1, tebal 1) — diskala per sisi.
+    // Pita jendela: kotak tipis — diskala per fasad (rows x segments).
     winStrip: new THREE.BoxGeometry(1, 1, 1),
     pole: new THREE.CylinderGeometry(0.09, 0.12, 1, 6),
     lampBall: new THREE.SphereGeometry(0.22, 8, 6),
@@ -55,8 +70,9 @@ function sharedMat() {
   const lambert = (c) => new THREE.MeshLambertMaterial({ color: c });
   const basic = (c) => new THREE.MeshBasicMaterial({ color: c });
   MAT = {
-    ground: lambert(0x35313d),
-    road: lambert(0x17141d),
+    ground: lambert(GROUND_COLOR),
+    road: lambert(ROAD_COLOR),
+    sidewalk: lambert(SIDEWALK_COLOR),
     sand: lambert(0xd9b380),
     sea: new THREE.MeshLambertMaterial({ color: 0x1a6f9e, transparent: true, opacity: 0.85 }),
     pierWood: lambert(0x8a6a42),
@@ -69,7 +85,8 @@ function sharedMat() {
     setback: lambert(0x3a3444),
     acUnit: lambert(0x8a8f96),
     antenna: lambert(0x555a60),
-    window: basic(0xffd27a),
+    windowLit: new THREE.MeshBasicMaterial({ color: WINDOWS.litColor }),
+    windowDark: new THREE.MeshBasicMaterial({ color: WINDOWS.darkColor }),
     neonPink: basic(0xff2d78),
     neonCyan: basic(0x22d3ee),
     neonYellow: basic(0xfacc15),
@@ -88,7 +105,8 @@ function sharedMat() {
     billboardPink: basic(0xff2d78),
     billboardCyan: basic(0x22d3ee),
     billboardYellow: basic(0xfacc15),
-    downtown: lambert(0x5a6b8a),
+    downtown: lambert(BUILDING_COLORS.downtown),
+    arcade: lambert(BUILDING_COLORS.arcade),
     pastel: [0xc9a0a0, 0xa0b8c9, 0xc9b8a0, 0xa8c9a0, 0xb8a0c9, 0xd0c0a8].map(lambert),
   };
   return MAT;
@@ -107,7 +125,7 @@ const NEON_SIGNS = ['neonPink', 'neonCyan', 'neonYellow', 'neonOrange', 'neonGre
 const AWNINGS = ['awningRed', 'awningTeal', 'awningAmber'];
 const BILLBOARDS = ['billboardPink', 'billboardCyan', 'billboardYellow'];
 
-// 8 persimpangan utama untuk lampu lalu lintas (§17.4).
+// 8 persimpangan utama untuk lampu lalu lintas.
 export const TRAFFIC_LIGHT_SPOTS = [
   { x: 0, z: 0 }, { x: 0, z: 104 }, { x: -104, z: 0 }, { x: 104, z: 0 },
   { x: 0, z: -104 }, { x: -104, z: -104 }, { x: 104, z: 104 }, { x: 52, z: 52 },
@@ -145,6 +163,23 @@ export const World = {
     this.roads = [];
     const trafficLights = [];
 
+    // --- Sky dome: gradasi senja SKY_GRADIENT (indigo -> ungu -> oranye -> kuning).
+    const skyGeo = new THREE.SphereGeometry(420, 16, 12);
+    const skyCanvas = document.createElement('canvas');
+    skyCanvas.width = 4;
+    skyCanvas.height = 256;
+    const sctx = skyCanvas.getContext('2d');
+    const grad = sctx.createLinearGradient(0, 0, 0, 256);
+    grad.addColorStop(0, SKY_GRADIENT[0]);
+    grad.addColorStop(0.45, SKY_GRADIENT[1]);
+    grad.addColorStop(0.75, SKY_GRADIENT[2]);
+    grad.addColorStop(1, SKY_GRADIENT[3]);
+    sctx.fillStyle = grad;
+    sctx.fillRect(0, 0, 4, 256);
+    const skyTex = new THREE.CanvasTexture(skyCanvas);
+    const sky = new THREE.Mesh(skyGeo, new THREE.MeshBasicMaterial({ map: skyTex, side: THREE.BackSide, fog: false }));
+    scene.add(sky);
+
     // --- Tanah dasar + jalan ---
     const ground = new THREE.Mesh(new THREE.PlaneGeometry(480, 480), mat.ground);
     ground.rotation.x = -Math.PI / 2;
@@ -163,6 +198,15 @@ export const World = {
       rz.position.set(p, 0.02, 0);
       rz.receiveShadow = true;
       scene.add(rz);
+      // Trotoar tipis di tepi jalan (kontras aspal vs tanah).
+      const swx = new THREE.Mesh(new THREE.PlaneGeometry(480, 1.2), mat.sidewalk);
+      swx.rotation.x = -Math.PI / 2;
+      swx.position.set(0, 0.03, p + 6.6);
+      scene.add(swx);
+      const swz = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 480), mat.sidewalk);
+      swz.rotation.x = -Math.PI / 2;
+      swz.position.set(p + 6.6, 0.03, 0);
+      scene.add(swz);
     }
 
     // --- Pantai timur: pasir + laut ---
@@ -249,18 +293,18 @@ export const World = {
           const cx = bx + jx;
           const cz = bz + jz;
           const h = hMin + rng() * (hMax - hMin);
-          const bodyMat = d === 'downtown' ? mat.downtown : mat.pastel[Math.floor(rng() * mat.pastel.length)];
+          const bodyMat = d === 'downtown' ? mat.downtown : d === 'arcade' ? mat.arcade : mat.pastel[Math.floor(rng() * mat.pastel.length)];
           const body = box(scene, geo.unitBox, bodyMat, cx, h / 2, cz, w, h, dep);
           body.castShadow = true;
           body.receiveShadow = true;
           // Atap datar gelap.
           box(scene, geo.unitBox, mat.roof, cx, h + 0.25, cz, w + 0.4, 0.5, dep + 0.4);
-          // §17.4: lantai atas setback (kotak lebih kecil di atap, tinggi 3-5).
+          // Lantai atas setback (kotak lebih kecil di atap, tinggi 3-5).
           const sbH = 3 + rng() * 2;
           const sbW = w * (0.45 + rng() * 0.15);
           const sbD = dep * (0.45 + rng() * 0.15);
           box(scene, geo.unitBox, mat.setback, cx, h + 0.5 + sbH / 2, cz, sbW, sbH, sbD);
-          // §17.4: rooftop props — kotak AC + antena pada 50% gedung (deterministik).
+          // Rooftop props — kotak AC + antena pada 50% gedung (deterministik).
           if (rng() < 0.5) {
             box(scene, geo.unitBox, mat.acUnit, cx + w * 0.22, h + 1.1, cz - dep * 0.2, 2.4, 1.2, 1.8);
             const ant = new THREE.Mesh(geo.pole, mat.antenna);
@@ -269,15 +313,27 @@ export const World = {
             scene.add(ant);
             box(scene, geo.lampBall, mat.lampRed, cx - w * 0.22, h + 4.6, cz + dep * 0.2, 1, 1, 1);
           }
-          // §17.4: strip jendela emissive di KEEMPAT sisi fasad.
-          const winY = h * 0.55;
-          const winH = Math.max(1.2, h * 0.28);
-          // Depan (+z) & belakang (-z).
-          box(scene, geo.winStrip, mat.window, cx, winY, cz + dep / 2 + 0.06, w * 0.8, winH, 0.12);
-          box(scene, geo.winStrip, mat.window, cx, winY, cz - dep / 2 - 0.06, w * 0.8, winH, 0.12);
-          // Kiri (-x) & kanan (+x).
-          box(scene, geo.winStrip, mat.window, cx - w / 2 - 0.06, winY, cz, 0.12, winH, dep * 0.8);
-          box(scene, geo.winStrip, mat.window, cx + w / 2 + 0.06, winY, cz, 0.12, winH, dep * 0.8);
+          // Jendela PITA BESAR berkelompok (WINDOWS.rows x WINDOWS.segments
+          // per fasad): pita lebar, sebagian menyala kuning hangat, sebagian
+          // gelap — terbaca di thumbnail, tanpa aliasing grid rapat.
+          const winH = Math.max(1.6, h * 0.22);
+          for (let r = 0; r < WINDOWS.rows; r++) {
+            const wy = h * (0.3 + (r * 0.4) / Math.max(1, WINDOWS.rows - 1 || 1));
+            for (let s = 0; s < WINDOWS.segments; s++) {
+              const lit = rng() < WINDOWS.litRatio;
+              const wm = lit ? mat.windowLit : mat.windowDark;
+              const segW = (w * 0.8) / WINDOWS.segments;
+              const segD = (dep * 0.8) / WINDOWS.segments;
+              const offW = (s - (WINDOWS.segments - 1) / 2) * segW;
+              const offD = (s - (WINDOWS.segments - 1) / 2) * segD;
+              // Depan (+z) & belakang (-z).
+              box(scene, geo.winStrip, wm, cx + offW, wy, cz + dep / 2 + 0.06, segW * 0.86, winH, 0.12);
+              box(scene, geo.winStrip, wm, cx + offW, wy, cz - dep / 2 - 0.06, segW * 0.86, winH, 0.12);
+              // Kiri (-x) & kanan (+x).
+              box(scene, geo.winStrip, wm, cx - w / 2 - 0.06, wy, cz + offD, 0.12, winH, segD * 0.86);
+              box(scene, geo.winStrip, wm, cx + w / 2 + 0.06, wy, cz + offD, 0.12, winH, segD * 0.86);
+            }
+          }
           // Neon sign: lantai dasar (y~3.2, terbaca kamera chase rendah) di
           // Strip/Arcade + di atas gedung.
           if (d === 'strip' || d === 'arcade') {
@@ -286,7 +342,7 @@ export const World = {
             if (rng() < 0.5) {
               box(scene, geo.unitBox, nm, cx, h + 1.4, cz + dep / 2 + 0.12, w * 0.4, 1.2, 0.15);
             }
-            // §17.4: awning toko warna-warni di lantai dasar Strip/Arcade.
+            // Awning toko warna-warni di lantai dasar Strip/Arcade.
             const am = awningMats[Math.floor(rng() * awningMats.length)];
             const awn = box(scene, geo.unitBox, am, cx, 2.6, cz + dep / 2 + 0.9, w * 0.6, 0.25, 1.8);
             awn.rotation.x = 0.35;
@@ -295,7 +351,7 @@ export const World = {
           if (d === 'downtown' && h > 35) {
             box(scene, geo.lampBall, mat.lampRed, cx, h + sbH + 0.8, cz, 1, 1, 1);
           }
-          // §17.4: billboard emissive besar di 4 gedung Downtown tinggi (>35).
+          // Billboard emissive besar di 4 gedung Downtown tinggi (>35).
           if (d === 'downtown' && h > 35 && billboardsPlaced < 4) {
             const bm = billboardMats[billboardsPlaced % billboardMats.length];
             box(scene, geo.unitBox, bm, cx, h * 0.72, cz + dep / 2 + 0.15, w * 0.7, h * 0.3, 0.2);
@@ -306,7 +362,7 @@ export const World = {
       }
     }
 
-    // --- Lampu lalu lintas di 8 persimpangan utama (§17.4) ---
+    // --- Lampu lalu lintas di 8 persimpangan utama ---
     for (let i = 0; i < TRAFFIC_LIGHT_SPOTS.length; i++) {
       const s = TRAFFIC_LIGHT_SPOTS[i];
       const px = s.x + 7.5;

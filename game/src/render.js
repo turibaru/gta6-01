@@ -1,25 +1,17 @@
-// NEON BAY: SUNSET RUN — render.js (R7 deepen)
+// NEON BAY: SUNSET RUN — render.js (R9 legibility rebuild)
+// Fresh composition from the R7 design spec + R8 legibility values. No credentials, no secrets, no external requests.
 // Renderer three.js r128 (global THREE dari vendor/three.min.js), golden hour,
-// chase camera, syncEntities (termasuk mesh BIKE §17.2), beacon, heli,
-// muzzle flash, minimap 2D. Spec §6 + §17.2/§17.4.
-// Mesh dibuat sekali, dipakai ulang — tidak ada mesh baru tiap frame (§17.7c).
+// chase camera, syncEntities (termasuk mesh BIKE), beacon ramping, heli,
+// muzzle flash, minimap 2D 240px + label distrik. Spec §6.
+// Mesh dibuat sekali, dipakai ulang — tidak ada mesh baru tiap frame.
 
 const THREE = window.THREE;
 if (!THREE) throw new Error('render.js: THREE tidak ditemukan — vendor/three.min.js belum dimuat');
 
-import { CONFIG, ROAD_POS } from './config.js';
+import { CONFIG, LIGHTING, SKY_GRADIENT, HUD_FONT_SIZES, MINIMAP_SIZE, BEACON_STYLE } from './config.js';
+import { districtLabel } from './world.js';
 
-const MINIMAP_SIZE = 180;
-
-// Nama distrik dari koordinat (ambang sama seperti districtOf di world.js,
-// tapi atas posisi mentah pemain — cukup untuk label minimap).
-function districtName(x, z) {
-  if (x >= 130) return 'beach';
-  if (x <= -130) return 'downtown';
-  if (z >= 130) return 'arcade';
-  if (z <= -130) return 'hills';
-  return 'strip';
-}
+const ROAD_POS = [-208, -156, -104, -52, 0, 52, 104, 156, 208];
 
 let GEO = null;
 let MAT = null;
@@ -35,7 +27,7 @@ function sharedGeo() {
     rotor: new THREE.BoxGeometry(1, 1, 1),
     cone: new THREE.ConeGeometry(1, 1, 12),
     ring: new THREE.RingGeometry(0.9, 1, 32),
-    pillar: new THREE.CylinderGeometry(1.6, 2.2, 60, 16, 1, true),
+    pillar: new THREE.CylinderGeometry(BEACON_STYLE.radius, BEACON_STYLE.radius, 60, 16, 1, true),
     flash: new THREE.PlaneGeometry(1.6, 1.6),
   };
   return GEO;
@@ -53,17 +45,14 @@ function sharedMat() {
     glass: lambert(0x1f2937),
     tire: lambert(0x0f0f0f),
     chrome: lambert(0x9ca3af),
-    beaconPink: new THREE.MeshBasicMaterial({ color: 0xff2d78, transparent: true, opacity: 0.35, side: THREE.DoubleSide, depthWrite: false }),
-    beaconRing: new THREE.MeshBasicMaterial({ color: 0xff2d78, transparent: true, opacity: 0.6, side: THREE.DoubleSide, depthWrite: false }),
-    beaconCyan: new THREE.MeshBasicMaterial({ color: 0x22d3ee, transparent: true, opacity: 0.35, side: THREE.DoubleSide, depthWrite: false }),
+    beaconPink: new THREE.MeshBasicMaterial({ color: BEACON_STYLE.color, transparent: true, opacity: BEACON_STYLE.opacity, side: THREE.DoubleSide, depthWrite: false }),
+    beaconRing: new THREE.MeshBasicMaterial({ color: BEACON_STYLE.color, transparent: true, opacity: BEACON_STYLE.opacity, side: THREE.DoubleSide, depthWrite: false }),
+    beaconCyan: new THREE.MeshBasicMaterial({ color: BEACON_STYLE.altColor, transparent: true, opacity: BEACON_STYLE.opacity, side: THREE.DoubleSide, depthWrite: false }),
     muzzle: new THREE.MeshBasicMaterial({ color: 0xffe066, transparent: true, opacity: 0.95, side: THREE.DoubleSide, depthWrite: false }),
     lightRed: basic(0xef4444),
     lightBlue: basic(0x3b82f6),
     lightRedOff: basic(0x7f1d1d),
     lightBlueOff: basic(0x1e3a8a),
-    // BUG R7 (temuan B5): render() memakai m.lampRed/lampGreen/lampOff untuk
-    // lampu lalu lintas, tapi sharedMat() tidak mendefinisikannya -> material
-    // undefined di frame pertama. Didefinisikan di sini (B6).
     lampRed: basic(0xef4444),
     lampYellow: basic(0xfacc15),
     lampGreen: basic(0x22c55e),
@@ -112,17 +101,15 @@ export class Renderer {
     this.canvas = this.renderer.domElement;
 
     this.scene = new THREE.Scene();
-    // Golden hour: langit senja ungu-oranye + fog ungu-jingga (~300 m).
-    // B6: saturasi magenta-oranye dikuatkan (lawan bayangan teal dari rim).
-    this.scene.background = new THREE.Color(0x4a1c5c);
-    this.scene.fog = new THREE.FogExp2(0xa8546b, 0.0022);
+    // Golden hour (LIGHTING): langit senja ungu-oranye + fog ungu.
+    this.scene.background = new THREE.Color(SKY_GRADIENT[1]);
+    this.scene.fog = new THREE.FogExp2(LIGHTING.fogColor, LIGHTING.fogDensity);
 
     this.camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 900);
     this.camera.position.set(0, 8, 40);
 
     // Matahari rendah dari barat (bayangan panjang) + hemisphere langit/tanah.
-    // B6: intensitas matahari 1.15 -> 1.35 (rim lebih kuat).
-    const sun = new THREE.DirectionalLight(0xffb347, 1.35);
+    const sun = new THREE.DirectionalLight(LIGHTING.sunColor, LIGHTING.sunIntensity);
     sun.position.set(-140, 42, 60);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
@@ -133,22 +120,33 @@ export class Renderer {
     sun.shadow.camera.far = 500;
     this.scene.add(sun);
     this.sun = sun;
-    const hemi = new THREE.HemisphereLight(0x9a5ab0, 0x2a1a20, 0.75);
+    const hemi = new THREE.HemisphereLight(LIGHTING.hemisphereSky, LIGHTING.hemisphereGround, LIGHTING.hemisphereIntensity);
     this.scene.add(hemi);
-    // B6: rim/fill dingin dari timur (teal) — kontras magenta-oranye vs teal.
-    const rim = new THREE.DirectionalLight(0x67e8f9, 0.4);
+    this.hemi = hemi;
+    const ambient = new THREE.AmbientLight(LIGHTING.ambientColor, LIGHTING.ambientIntensity);
+    this.scene.add(ambient);
+    this.ambient = ambient;
+    // Rim/fill dingin dari timur (teal) — kontras magenta-oranye vs teal.
+    const rim = new THREE.DirectionalLight(LIGHTING.rimColor, LIGHTING.rimIntensity);
     rim.position.set(140, 30, -40);
     this.scene.add(rim);
     this.rim = rim;
 
-    // Beacon misi: pilar cahaya + cincin di tanah.
+    // Beacon misi: pilar ramping + alas lebar + cincin di tanah (BEACON_STYLE).
     this.beaconGroup = new THREE.Group();
     this.beaconPillar = new THREE.Mesh(sharedGeo().pillar, sharedMat().beaconPink);
     this.beaconPillar.position.y = 30;
+    const beaconBase = new THREE.Mesh(sharedGeo().ring, sharedMat().beaconRing);
+    beaconBase.rotation.x = -Math.PI / 2;
+    beaconBase.position.y = 0.12;
+    beaconBase.scale.set(BEACON_STYLE.baseRadius, BEACON_STYLE.baseRadius, 1);
+    this.beaconBase = beaconBase;
     this.beaconRing = new THREE.Mesh(sharedGeo().ring, sharedMat().beaconRing);
     this.beaconRing.rotation.x = -Math.PI / 2;
     this.beaconRing.position.y = 0.15;
+    this.beaconRing.scale.set(BEACON_STYLE.ringRadius, BEACON_STYLE.ringRadius, 1);
     this.beaconGroup.add(this.beaconPillar);
+    this.beaconGroup.add(this.beaconBase);
     this.beaconGroup.add(this.beaconRing);
     this.beaconGroup.visible = false;
     this.scene.add(this.beaconGroup);
@@ -165,10 +163,10 @@ export class Renderer {
     this.scene.add(this.muzzle);
     this.muzzleTimer = 0;
 
-    // B6: api mobil terbakar (cover shot) — grup cone dipakai ulang, diset
-    // via setFire(x, z, visible). Geometri shared, material shared (§17.7c).
-    // visuals.js hanya menyimpan state partikel (tidak digambar renderer),
-    // jadi api yang TERLIHAT di screenshot adalah grup ini.
+    // Api mobil terbakar (cover shot) — grup cone dipakai ulang, diset
+    // via setFire(x, z, visible). visuals.js hanya menyimpan state partikel
+    // (tidak digambar renderer), jadi api yang TERLIHAT di screenshot
+    // adalah grup ini.
     this.fireGroup = new THREE.Group();
     const fireOuter = new THREE.Mesh(sharedGeo().cone, sharedMat().fireOrange);
     fireOuter.scale.set(2.4, 3.2, 2.4);
@@ -214,7 +212,7 @@ export class Renderer {
   }
 
   // Chase camera. snap=true -> langsung ke posisi (mode frozen/screenshot:
-  // pelajaran R6 — lerp 0.12/frame tidak pernah sampai di ~1.5fps SwiftShader).
+  // lerp 0.12/frame tidak pernah sampai di ~1.5fps SwiftShader).
   setChaseCamera(x, z, heading, mode, snap) {
     const dist = mode === 'foot' ? 7 : 9;
     const height = mode === 'foot' ? 3.5 : 4.5;
@@ -280,7 +278,7 @@ export class Renderer {
     return g;
   }
 
-  // §17.2 — motor: dua roda + badan ramping + pengendara kapsul.
+  // Motor: dua roda + badan ramping + pengendara kapsul.
   _buildBike(colorHex) {
     const g = new THREE.Group();
     const m = sharedMat();
@@ -395,6 +393,8 @@ export class Renderer {
       this.beaconGroup.position.set(x, 0, z);
       const cyan = color === 'cyan';
       this.beaconPillar.material = cyan ? sharedMat().beaconCyan : sharedMat().beaconPink;
+      this.beaconRing.material = cyan ? sharedMat().beaconCyan : sharedMat().beaconRing;
+      this.beaconBase.material = cyan ? sharedMat().beaconCyan : sharedMat().beaconRing;
     }
   }
 
@@ -417,7 +417,7 @@ export class Renderer {
     this.muzzleTimer = 0.09;
   }
 
-  // B6: api mobil terbakar (cover shot). Dipanggil sekali dari preset;
+  // Api mobil terbakar (cover shot). Dipanggil sekali dari preset;
   // grup tetap di posisi itu selama halaman hidup (mode frozen: render saja).
   setFire(x, z, visible) {
     this.fire = { x, z, visible: !!visible };
@@ -426,14 +426,20 @@ export class Renderer {
     return this.fire;
   }
 
-  // Minimap 2D 180x180, range 130 m (§6). blips: [{x, z, kind}]
+  // Minimap 2D MINIMAP_SIZE (240), range 130 m. blips: [{x, z, kind}]
   // kind: 'beacon' | 'police' | 'hideout' | 'traffic' | 'ped' | 'player'.
-  updateMinimap(px, pz, heading, blips) {
+  // district: label distrik pemain (mis. 'STRIP'); bila kosong, dihitung
+  // dari posisi via districtLabel().
+  updateMinimap(px, pz, heading, blips, district) {
     const cv = this.minimap;
     if (!cv) return;
+    const S = MINIMAP_SIZE;
+    // Canvas R7 180x180 di index.html — naikkan buffer ke 240 supaya
+    // gambar tidak terpotong; CSS tetap mengatur ukuran tampil.
+    if (cv.width !== S) cv.width = S;
+    if (cv.height !== S) cv.height = S;
     const ctx = cv.getContext('2d');
     if (!ctx) return;
-    const S = MINIMAP_SIZE;
     const range = CONFIG.minimapRange || 130;
     const scale = S / (range * 2);
     const toMap = (x, z) => [S / 2 + (x - px) * scale, S / 2 + (z - pz) * scale];
@@ -484,7 +490,7 @@ export class Renderer {
         ctx.fillRect(bx - 1.5, bz - 1.5, 3, 3);
       }
     }
-    // B6: route line putus-putus dari pemain ke beacon misi (bila terlihat).
+    // Route line putus-putus dari pemain ke beacon misi (bila terlihat).
     if (beaconPos) {
       ctx.save();
       ctx.setLineDash([4, 4]);
@@ -505,16 +511,17 @@ export class Renderer {
     ctx.moveTo(0, -7); ctx.lineTo(5, 6); ctx.lineTo(-5, 6); ctx.closePath();
     ctx.fill();
     ctx.restore();
-    // B6: kompas "N" (minimap north-up) + label nama distrik pemain.
+    // Kompas "N" (minimap north-up) + label nama distrik pemain.
+    const label = (district && String(district).toUpperCase()) || districtLabel(px, pz);
     ctx.save();
-    ctx.font = 'bold 11px sans-serif';
+    ctx.font = 'bold 12px sans-serif';
     ctx.textAlign = 'center';
     ctx.fillStyle = '#e2e8f0';
-    ctx.fillText('N', S / 2, 13);
-    ctx.font = 'bold 10px sans-serif';
+    ctx.fillText('N', S / 2, 14);
+    ctx.font = 'bold ' + HUD_FONT_SIZES.pill + 'px sans-serif';
     ctx.textAlign = 'left';
     ctx.fillStyle = '#ff2d78';
-    ctx.fillText(districtName(px, pz).toUpperCase(), 6, S - 6);
+    ctx.fillText(label, 8, S - 8);
     ctx.restore();
     // Bingkai.
     ctx.strokeStyle = '#ff2d78';
@@ -526,13 +533,13 @@ export class Renderer {
     const d = dt || 0.016;
     this._time += d;
     this._blink += d;
-    // Denyut beacon.
+    // Denyut beacon (pilar ramping + ring).
     if (this.beaconGroup.visible) {
       const s = 1 + Math.sin(this._time * 4) * 0.12;
-      this.beaconRing.scale.set(s, s, 1);
-      this.beaconPillar.material.opacity = 0.28 + Math.sin(this._time * 4) * 0.1;
+      this.beaconRing.scale.set(BEACON_STYLE.ringRadius * s, BEACON_STYLE.ringRadius * s, 1);
+      this.beaconPillar.material.opacity = BEACON_STYLE.opacity * (0.85 + 0.15 * Math.sin(this._time * 2));
     }
-    // Lampu lalu lintas bergantian deterministik dari waktu (§17.4):
+    // Lampu lalu lintas bergantian deterministik dari waktu:
     // tiap 4 detik fase berbalik.
     const phase = Math.floor(this._time / 4) % 2;
     const m = sharedMat();

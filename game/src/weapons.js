@@ -1,21 +1,22 @@
-// weapons.js — Senjata — GTA 6 R7
-// Spec §3 + §5 + §17.3. pistol/scatter/smg/fists + RIFLE (key 5, ammo 40,
-// dmg 60, rate 0.6, range 140, spread 0.004). shoot(): raycast kerucut ke
-// target terdekat dalam range; scatter 6 pellet; melee range 2.4.
-// Menembak (F/klik) naikkan heat +10 — KECUALI tembakan yang mengenai mobil
-// RIVAL di misi 9 (tidak menambah heat, §17.7b).
+// weapons.js — Senjata — GTA 6 R9 REBUILD
+// REBUILD FRESH dari base R7 (bukan copy R8). Spec §3 + §5 + §17.3.
+// WEAPON_DEFS + WEAPON_ORDER diambil dari config.js (satu sumber kebenaran):
+// pistol '1' (ammo 120, dmg 34), scatter '2' (24, dmg 22, 6 pellet),
+// smg '3' (120, dmg 16, auto), fists '4' (melee, range 2.4),
+// rifle '5' (ammo 40, dmg 60, rate 0.6, range 140, spread 0.004).
+// shoot(): raycast kerucut ke target terdekat dalam range; scatter 6 pellet;
+// melee range 2.4. Menembak (F/klik) naikkan heat +10 — KECUALI tembakan
+// yang mengenai mobil RIVAL di misi 9 (tidak menambah heat, §17.7b).
+// selectByKey menerima kunci STRING '1'..'5' maupun number 1..5.
 
-export const WEAPON_DEFS = {
-  pistol: { key: 1, ammo: 120, dmg: 34, rate: 0.28, range: 90, spread: 0.012, color: '#ffd166' },
-  scatter: { key: 2, ammo: 24, dmg: 22, rate: 0.85, range: 38, spread: 0.09, pellets: 6, color: '#ff7b54' },
-  smg: { key: 3, ammo: 120, dmg: 16, rate: 0.09, range: 70, spread: 0.035, auto: true, color: '#7ee8fa' },
-  fists: { key: 4, ammo: Infinity, dmg: 25, rate: 0.45, range: 2.4, melee: true, color: '#e2e8f0' },
-  rifle: { key: 5, ammo: 40, dmg: 60, rate: 0.6, range: 140, spread: 0.004, color: '#facc15' },
-};
-export const WEAPON_ORDER = ['pistol', 'scatter', 'smg', 'fists', 'rifle'];
-export const WEAPON_NAMES = {
-  pistol: 'Pistol', scatter: 'Scattergun', smg: 'SMG', fists: 'Fists', rifle: 'Rifle',
-};
+import { WEAPON_DEFS, WEAPON_ORDER } from './config.js';
+
+export { WEAPON_DEFS, WEAPON_ORDER };
+
+export const WEAPON_NAMES = {};
+for (const name of WEAPON_ORDER) {
+  WEAPON_NAMES[name] = (WEAPON_DEFS[name] && WEAPON_DEFS[name].name) || name;
+}
 
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
@@ -40,9 +41,13 @@ export class Weapons {
     return this.current;
   }
 
+  // Kunci STRING '1'..'5' (dari input Digit1..Digit5, sesuai WEAPON_DEFS
+  // di config.js yang memakai key string) atau number 1..5 — dibandingkan
+  // sebagai string supaya cocok dengan kedua bentuk.
   selectByKey(key) {
+    const k = String(key);
     for (const name of WEAPON_ORDER) {
-      if (WEAPON_DEFS[name].key === key) return this.select(name);
+      if (String(WEAPON_DEFS[name].key) === k) return this.select(name);
     }
     return this.current;
   }

@@ -1,25 +1,19 @@
-// dressing.js — Detail kota kecil di trotoar — GTA 6 R7
-// Spec §5 + §17.4/§17.7c. dressWorld(scene, worldData): lampu jalan, rambu,
-// tempat sampah, bangku, detail kota kecil di trotoar (JANGAN di tengah
-// jalan). WAJIB reuse geometry + material yang sama (jangan buat geometry
-// baru per prop); semua deterministik dari seed 20261121.
+// dressing.js — Detail kota kecil di trotoar — NEON BAY: SUNSET RUN (ronde 9)
+// REBUILD FRESH dari base R7 (bukan copy R8). Spec §5 + §17.4/§17.7c.
+// dressWorld(scene, worldData): lampu jalan, rambu, tempat sampah,
+// bangku, detail kota kecil di trotoar (JANGAN di tengah jalan). WAJIB
+// reuse geometry + material yang sama (jangan buat geometry baru per
+// prop); semua deterministik — SATU-SATUNYA sumber acak adalah
+// mulberry32(CONFIG.seed + 7) dari config.js. JANGAN Math.random.
+
+import { CONFIG, mulberry32 } from './config.js';
 
 export const ROAD_POS = [-208, -156, -104, -52, 0, 52, 104, 156, 208];
-
-function mulberry32(seed) {
-  let a = seed >>> 0;
-  return function () {
-    a |= 0; a = (a + 0x6D2B79F5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
 
 export function dressWorld(scene, worldData, THREE) {
   const T = THREE || (typeof globalThis !== 'undefined' ? globalThis.THREE : null);
   if (!scene || !T) return { count: 0 };
-  const rng = mulberry32(20261121);
+  const rng = mulberry32(CONFIG.seed + 7);
 
   // --- geometry + material DIBAGI (reuse, §17.7c) ---
   const poleGeo = new T.BoxGeometry(0.18, 5.2, 0.18);

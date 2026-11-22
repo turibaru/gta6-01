@@ -1,15 +1,16 @@
-// radio.js — Radio 3 stasiun, sequencer WebAudio — GTA 6 R7
-// Spec §3 + §5. NEON 99.1 (synthwave arp, bpm 112, sawtooth, root 55,
+// radio.js — Radio 3 stasiun, sequencer WebAudio — GTA 6 R9 REBUILD
+// REBUILD FRESH dari base R7 (bukan copy R8). Spec §3 + §5.
+// RADIO_STATIONS diambil dari config.js (satu sumber kebenaran):
+// NEON 99.1 (synthwave arp, bpm 112, sawtooth, root 55,
 // scale [0,3,5,7,10,12,15], bass), OMBO 98.4 (bass groove, bpm 96, square,
 // root 49, scale [0,3,5,10,12], bass), VICE FM (chill pads, bpm 72,
 // triangle, root 65.4, scale [0,2,4,7,9,12], no bass).
+// Default index 0 -> currentName() 'NEON 99.1'.
 // Sequencer TIDAK PERNAH throw bila AudioContext belum ada / suspended.
 
-export const RADIO_STATIONS = [
-  { name: 'NEON 99.1', bpm: 112, wave: 'sawtooth', root: 55, scale: [0, 3, 5, 7, 10, 12, 15], bass: true },
-  { name: 'OMBO 98.4', bpm: 96, wave: 'square', root: 49, scale: [0, 3, 5, 10, 12], bass: true },
-  { name: 'VICE FM', bpm: 72, wave: 'triangle', root: 65.4, scale: [0, 2, 4, 7, 9, 12], bass: false },
-];
+import { RADIO_STATIONS } from './config.js';
+
+export { RADIO_STATIONS };
 
 function noteFreq(root, semitone) {
   return root * Math.pow(2, semitone / 12);

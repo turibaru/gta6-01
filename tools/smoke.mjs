@@ -1,4 +1,5 @@
 // tools/smoke.mjs — harness smoke test NEON BAY: SUNSET RUN.
+// Ronde 9 rebuild (base R7; preset shot 3: garage -> avenue, sesuai spec R8).
 // 18 checks (spec §10 menyebut 20, enumerasinya 18: 1 load + 1 canvas +
 // 12 playtest R6 + 3 playtest baru R7 + ... — lihat daftar di bawah;
 // §17.6: smoke 18/18 PASS). Keluar 0 bila semua PASS.
@@ -194,7 +195,8 @@ async function main() {
     // Kebersihan console/exception selama playtest (§10: langkah 3-14
     // mensyaratkan 0 exception + 0 console error) digabung ke check 18
     // supaya jumlah check tetap 18.
-    // (18) 4 screenshot di disk, masing-masing <=256 KiB, 1280x720.
+    // (18) 4 screenshot di disk (cover/street/avenue/mission, dari
+    // SHOT_ORDER di shot.mjs), masing-masing <=256 KiB, 1280x720.
     let shotsOk = true;
     const shotDetails = [];
     for (const name of SHOT_ORDER) {

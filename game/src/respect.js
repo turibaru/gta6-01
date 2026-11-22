@@ -1,19 +1,23 @@
-// respect.js — Respect / peringkat kru — GTA 6 R7
-// Spec §3 + §5. RESPECT_RANKS: Rookie 0, Hustler 150, Wheelman 400,
-// Kingpin 800, Neon Legend 1500.
+// respect.js — Respect / peringkat kru — GTA 6 R9 REBUILD
+// REBUILD FRESH dari base R7 (bukan copy R8). Spec §3 + §5.
+// RESPECT_RANKS diambil dari config.js (satu sumber kebenaran):
+// Rookie 0, Hustler 150, Wheelman 400, Kingpin 800, Neon Legend 1500.
+// CATATAN R9: config memakai field `points` (bukan `min` seperti R7
+// lokal) — rankFor/nextRank membaca `min ?? points` supaya tetap cocok
+// bila koordinator menyeragamkan nama field ke `min`.
 
-export const RESPECT_RANKS = [
-  { name: 'Rookie', min: 0 },
-  { name: 'Hustler', min: 150 },
-  { name: 'Wheelman', min: 400 },
-  { name: 'Kingpin', min: 800 },
-  { name: 'Neon Legend', min: 1500 },
-];
+import { RESPECT_RANKS } from './config.js';
+
+export { RESPECT_RANKS };
+
+function rankMin(r) {
+  return (typeof r.min === 'number') ? r.min : r.points;
+}
 
 export function rankFor(points) {
   let rank = RESPECT_RANKS[0].name;
   for (const r of RESPECT_RANKS) {
-    if (points >= r.min) rank = r.name;
+    if (points >= rankMin(r)) rank = r.name;
   }
   return rank;
 }
@@ -47,7 +51,8 @@ export class Respect {
   // Poin menuju rank berikutnya (null bila sudah Neon Legend).
   nextRank() {
     for (const r of RESPECT_RANKS) {
-      if (this.points < r.min) return { name: r.name, min: r.min, remaining: r.min - this.points };
+      const min = rankMin(r);
+      if (this.points < min) return { name: r.name, min, remaining: min - this.points };
     }
     return null;
   }

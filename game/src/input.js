@@ -1,6 +1,10 @@
-// input.js — Keyboard + mouse — GTA 6 R7
+// input.js — Keyboard + mouse — GTA 6 (R9 legibility rebuild)
+// Fresh composition from the R7 design spec + R8 legibility values. No credentials, no secrets, no external requests.
 // Spec §5. WASD/panah, SHIFT, E, SPASI, F, 1-5, R, G, P/ESC, M, ENTER.
 // Mouse click = tembak. Edge-trigger untuk ENTER/E/F/G/R (sekali per tekan).
+// Key handling konsisten dengan main.js: wasPressed('Digit1'..'Digit5',
+// 'Numpad1'..'Numpad5') untuk ganti senjata, wasPressed('KeyF') atau klik
+// mouse untuk tembak, endFrame() membersihkan edge di akhir tiap frame.
 
 export class Input {
   constructor() {

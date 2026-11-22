@@ -1,4 +1,5 @@
-// audio.js — AudioSys, WebAudio tanpa file — GTA 6 R7
+// audio.js — AudioSys, WebAudio tanpa file — NEON BAY: SUNSET RUN (ronde 9)
+// REBUILD FRESH dari base R7 (bukan copy R8). Perilaku audio TIDAK diubah.
 // Spec §5 + §16a (WAJIB): AudioContext JANGAN dibuat saat boot tanpa
 // gesture — dibuat LAZY saat interaksi pertama (klik/keydown) dan resume()
 // di gesture. Bila suspended, SEMUA API tetap jalan dan TIDAK PERNAH throw.
