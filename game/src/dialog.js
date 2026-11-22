@@ -1,78 +1,65 @@
-// dialog.js — Dialog / briefing HUD — GTA 6 R7
-// Spec §5. Tampil di #hud-dialog (#hud-dialog-name + #hud-dialog-text),
-// auto-hide setelah `seconds`. queue() menumpuk dialog berurutan.
-
+// Dialog — NPC dialog box at the bottom of the screen with speaker name.
 export class Dialog {
   constructor() {
+    this.box = null;
+    this.whoEl = null;
+    this.textEl = null;
+    this.lines = [];
     this.visible = false;
-    this.name = '';
-    this.text = '';
-    this._timer = 0;
-    this._queue = [];
-    this._el = null;
-    this._nameEl = null;
-    this._textEl = null;
-    if (typeof document !== 'undefined') {
-      this._el = document.getElementById('hud-dialog');
-      this._nameEl = document.getElementById('hud-dialog-name');
-      this._textEl = document.getElementById('hud-dialog-text');
-    }
+    try {
+      if (typeof document !== 'undefined') {
+        this.box = document.getElementById('hud-dialog');
+        if (this.box) {
+          this.whoEl = this.box.querySelector('.dialog-who');
+          this.textEl = this.box.querySelector('.dialog-text');
+        }
+      }
+    } catch (e) {}
   }
 
-  _render() {
-    if (this._el) this._el.style.display = this.visible ? 'block' : 'none';
-    if (this._nameEl) this._nameEl.textContent = this.name || '';
-    if (this._textEl) this._textEl.textContent = this.text || '';
-  }
-
-  show(name, text, seconds = 4) {
-    this.name = name || '';
-    this.text = text || '';
+  say(who, text) {
     this.visible = true;
-    this._timer = Math.max(0.5, seconds || 4);
-    this._render();
-    return this;
+    try {
+      if (this.box) {
+        if (this.whoEl) this.whoEl.textContent = who;
+        if (this.textEl) this.textEl.textContent = text;
+        this.box.style.display = 'block';
+      }
+    } catch (e) {}
+    this._who = who;
+    this._text = text;
+  }
+
+
+  // Shot 1 police warning: NBPD orders the player to stop the chase.
+  policeWarning() {
+    this.say('NBPD', 'Berhenti sekarang! Anda diperintahkan menepi dan menyerah — kejar-kejaran ini berakhir di sini.');
+  }
+
+  // Alias: say with speaker "???".
+  show(text) {
+    this.say('???', text);
   }
 
   hide() {
     this.visible = false;
-    this._timer = 0;
-    this._render();
-    // Bila ada antrean, tampilkan berikutnya.
-    if (this._queue.length > 0) {
-      const next = this._queue.shift();
-      this.show(next.name, next.text, next.seconds);
+    try {
+      if (this.box) this.box.style.display = 'none';
+    } catch (e) {}
+  }
+
+  queue(lines) {
+    if (Array.isArray(lines)) {
+      for (const line of lines) this.lines.push(line);
     }
-    return this;
+    if (this.lines.length > 0 && !this.visible) this.next();
   }
 
-  // Briefing misi: nama misi + brief + payout.
-  showBriefing(def) {
-    if (!def) return this;
-    const title = def.name || ('JOB ' + (def.id || ''));
-    const brief = def.brief || def.description || '';
-    const payout = def.payout ? ' — Hadiah $' + def.payout : '';
-    const timer = def.timer ? ' — ' + def.timer + ' dtk' : '';
-    return this.show(title, brief + payout + timer, 6);
-  }
-
-  queue(name, text, seconds = 4) {
-    if (!this.visible) return this.show(name, text, seconds);
-    this._queue.push({ name, text, seconds });
-    return this;
-  }
-
-  // Dipanggil tiap frame dari main loop.
-  update(dt) {
-    if (!this.visible) return;
-    this._timer -= dt;
-    if (this._timer <= 0) this.hide();
-  }
-
-  clearQueue() {
-    this._queue.length = 0;
-    return this;
+  next() {
+    const line = this.lines.shift();
+    if (!line) { this.hide(); return; }
+    if (typeof line === 'string') this.say('???', line);
+    else this.say(line.who || '???', line.text || '');
   }
 }
-
 export default Dialog;

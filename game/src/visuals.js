@@ -1,124 +1,116 @@
-// visuals.js — Efek partikel & kilat — GTA 6 R7
-// Spec §5 + §17.4/§17.7c. muzzle flash, jejak asap/percik tabrakan,
-// lampu rem, asap knalpot + partikel api mobil rival yang dihentikan
-// (emissive oranye + asap). Pool partikel MAKSIMAL 40 sprite —
-// spawn baru saat pool penuh menggantikan partikel tertua.
+// NEON BAY: SUNSET RUN — efek visual (spec bagian 9).
+// Kelas Visuals: langit senja, pita jendela berkelompok, papan neon,
+// denyut beacon. TIDAK ADA metode setPink di sini (pernah bug di R8).
+// Material: MeshStandardMaterial / MeshBasicMaterial (neon = basic,
+// emissive). three.js global via game/vendor/three.min.js.
 
-export const MAX_PARTICLES = 40;
+import { CONFIG, mulberry32 } from "./config.js";
+
+const THREE = globalThis.THREE;
 
 export class Visuals {
   constructor() {
-    this.particles = []; // {x,y,z,vx,vy,vz,life,maxLife,color,size,kind}
-    this.muzzleFlashes = []; // {x,z,heading,life} — dibaca render.js
-    this.brakeLights = false;
+    this.rng = mulberry32(CONFIG.WORLD_SEED + 77);
   }
 
-  _push(p) {
-    if (this.particles.length >= MAX_PARTICLES) this.particles.shift();
-    this.particles.push(p);
-    return p;
+  // Langit gradasi senja: bola besar bermaterial basic, sisi dalam,
+  // gradasi ungu → oranye via canvas texture (konsisten dengan renderer).
+  makeSunsetSky() {
+    const c = document.createElement("canvas");
+    c.width = 64;
+    c.height = 512;
+    const ctx = c.getContext("2d");
+    const g = ctx.createLinearGradient(0, 0, 0, 512);
+    g.addColorStop(0.0, "#2b1055");
+    g.addColorStop(0.45, "#7a2d6e");
+    g.addColorStop(0.72, "#ff7e3d");
+    g.addColorStop(1.0, "#ffc46b");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, 64, 512);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const geo = new THREE.SphereGeometry(480, 24, 16);
+    const mat = new THREE.MeshBasicMaterial({ map: tex, side: THREE.BackSide, fog: false });
+    const sky = new THREE.Mesh(geo, mat);
+    // Matahari rendah di horizon: cakram oranye terang.
+    const sunGeo = new THREE.CircleGeometry(26, 32);
+    const sunMat = new THREE.MeshBasicMaterial({ color: 0xffd98a, fog: false });
+    const sunDisc = new THREE.Mesh(sunGeo, sunMat);
+    sunDisc.position.set(-260, 34, 120);
+    sunDisc.lookAt(0, 34, 0);
+    sky.add(sunDisc);
+    return sky;
   }
 
-  spawn(p) {
-    return this._push({
-      x: p.x || 0, y: p.y == null ? 0.5 : p.y, z: p.z || 0,
-      vx: p.vx || 0, vy: p.vy || 0, vz: p.vz || 0,
-      life: p.life || 0.6, maxLife: p.life || 0.6,
-      color: p.color || '#ffffff', size: p.size || 0.5,
-      kind: p.kind || 'spark',
-    });
-  }
-
-  // Kilat moncong senjata di posisi + heading penembak.
-  flashMuzzle(x, z, heading = 0) {
-    this.muzzleFlashes.push({ x, z, heading, life: 0.08 });
-    for (let i = 0; i < 3; i++) {
-      this.spawn({
-        x: x + Math.sin(heading) * 1.2, y: 1.1, z: z + Math.cos(heading) * 1.2,
-        vx: (Math.random() - 0.5) * 4, vy: Math.random() * 2, vz: (Math.random() - 0.5) * 4,
-        life: 0.12, color: '#ffd166', size: 0.6, kind: 'flash',
-      });
+  // Pita jendela berkelompok di fasad gedung: beberapa strip horizontal
+  // menyala (bukan titik acak). width/height = ukuran fasad, floors =
+  // jumlah lantai, lit = peluang tiap pita menyala.
+  makeWindowStrips(width, height, floors) {
+    const group = new THREE.Group();
+    const litMat = new THREE.MeshBasicMaterial({ color: 0xffc46b });
+    const darkMat = new THREE.MeshStandardMaterial({ color: 0x1a2233, roughness: 0.9 });
+    const stripH = 1.1;
+    const gap = height / Math.max(1, floors);
+    for (let f = 0; f < floors; f++) {
+      const y = gap * f + gap * 0.5 - height / 2;
+      // Kelompok: 1-3 pita per lantai, panjang bervariasi, deterministik.
+      const bands = 1 + Math.floor(this.rng() * 3);
+      for (let b = 0; b < bands; b++) {
+        const w = width * (0.25 + this.rng() * 0.45);
+        const x = (this.rng() - 0.5) * (width - w);
+        const lit = this.rng() < 0.7;
+        const geo = new THREE.PlaneGeometry(w, stripH);
+        const mesh = new THREE.Mesh(geo, lit ? litMat : darkMat);
+        mesh.position.set(x, y, 0.06);
+        group.add(mesh);
+      }
     }
-    return this.muzzleFlashes[this.muzzleFlashes.length - 1];
+    return group;
   }
 
-  // Percik kuning saat tabrakan (damageCar/damagePlayer).
-  sparks(x, z, n = 6) {
-    for (let i = 0; i < n; i++) {
-      const a = Math.random() * Math.PI * 2;
-      const s = 2 + Math.random() * 5;
-      this.spawn({
-        x, y: 0.8, z,
-        vx: Math.sin(a) * s, vy: 1 + Math.random() * 3, vz: Math.cos(a) * s,
-        life: 0.4 + Math.random() * 0.3, color: '#facc15', size: 0.4, kind: 'spark',
-      });
-    }
-    return this;
+  // Papan neon: teks via canvas texture di atas panel basic emissive,
+  // dengan glow plane di belakangnya. color = hex number.
+  makeNeonSign(text, color) {
+    const group = new THREE.Group();
+    const c = document.createElement("canvas");
+    c.width = 512;
+    c.height = 128;
+    const ctx = c.getContext("2d");
+    ctx.clearRect(0, 0, 512, 128);
+    ctx.font = "bold 72px monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.shadowColor = "#" + color.toString(16).padStart(6, "0");
+    ctx.shadowBlur = 28;
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText(String(text).toUpperCase(), 256, 64);
+    ctx.fillText(String(text).toUpperCase(), 256, 64);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const panel = new THREE.Mesh(
+      new THREE.PlaneGeometry(10, 2.5),
+      new THREE.MeshBasicMaterial({ map: tex, transparent: true })
+    );
+    const glow = new THREE.Mesh(
+      new THREE.PlaneGeometry(11, 3.2),
+      new THREE.MeshBasicMaterial({
+        color,
+        transparent: true,
+        opacity: 0.25,
+      })
+    );
+    glow.position.z = -0.05;
+    group.add(glow);
+    group.add(panel);
+    group.userData.text = text;
+    group.userData.color = color;
+    return group;
   }
 
-  // Asap abu-abu (tabrakan / knalpot).
-  smoke(x, z, n = 3, color = '#9ca3af') {
-    for (let i = 0; i < n; i++) {
-      this.spawn({
-        x: x + (Math.random() - 0.5), y: 0.6, z: z + (Math.random() - 0.5),
-        vx: (Math.random() - 0.5) * 0.5, vy: 0.8 + Math.random() * 0.8, vz: (Math.random() - 0.5) * 0.5,
-        life: 0.9 + Math.random() * 0.6, color, size: 0.8, kind: 'smoke',
-      });
-    }
-    return this;
-  }
-
-  // Asap knalpot saat akselerasi (ringan: 1 sprite per panggilan).
-  exhaust(x, z, heading) {
-    const bx = x - Math.sin(heading) * 2.2;
-    const bz = z - Math.cos(heading) * 2.2;
-    return this.spawn({
-      x: bx, y: 0.4, z: bz,
-      vx: -Math.sin(heading) * 1.5, vy: 0.5, vz: -Math.cos(heading) * 1.5,
-      life: 0.7, color: '#6b7280', size: 0.5, kind: 'smoke',
-    });
-  }
-
-  // Api mobil rival yang dihentikan (misi 9): emissive oranye + asap.
-  rivalFire(x, z) {
-    for (let i = 0; i < 4; i++) {
-      this.spawn({
-        x: x + (Math.random() - 0.5) * 1.5, y: 0.8 + Math.random() * 0.6, z: z + (Math.random() - 0.5) * 1.5,
-        vx: (Math.random() - 0.5), vy: 1.5 + Math.random(), vz: (Math.random() - 0.5),
-        life: 0.5 + Math.random() * 0.4, color: '#fb923c', size: 0.9, kind: 'fire',
-      });
-    }
-    this.spawn({ x, y: 1.6, z, vx: 0, vy: 1.2, vz: 0, life: 1.2, color: '#4b5563', size: 1.1, kind: 'smoke' });
-    return this;
-  }
-
-  setBrakeLights(on) {
-    this.brakeLights = !!on;
-    return this.brakeLights;
-  }
-
-  update(dt) {
-    for (let i = this.particles.length - 1; i >= 0; i--) {
-      const p = this.particles[i];
-      p.life -= dt;
-      if (p.life <= 0) { this.particles.splice(i, 1); continue; }
-      p.x += p.vx * dt;
-      p.y += p.vy * dt;
-      p.z += p.vz * dt;
-      p.vy -= p.kind === 'smoke' ? -0.2 * dt : 4 * dt;
-      if (p.y < 0.05) p.y = 0.05;
-    }
-    for (let i = this.muzzleFlashes.length - 1; i >= 0; i--) {
-      this.muzzleFlashes[i].life -= dt;
-      if (this.muzzleFlashes[i].life <= 0) this.muzzleFlashes.splice(i, 1);
-    }
-    return this.particles;
-  }
-
-  clear() {
-    this.particles = [];
-    this.muzzleFlashes = [];
-    return this;
+  // Denyut beacon: rumus WAJIB 0.6 * (0.85 + 0.15 * sin(t * 2)).
+  // Math.sin di sini BOLEH — fungsi waktu, bukan acak.
+  pulse(t) {
+    return 0.6 * (0.85 + 0.15 * Math.sin(t * 2));
   }
 }
 

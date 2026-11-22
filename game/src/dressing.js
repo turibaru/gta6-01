@@ -1,102 +1,141 @@
-// dressing.js — Detail kota kecil di trotoar — GTA 6 R7
-// Spec §5 + §17.4/§17.7c. dressWorld(scene, worldData): lampu jalan, rambu,
-// tempat sampah, bangku, detail kota kecil di trotoar (JANGAN di tengah
-// jalan). WAJIB reuse geometry + material yang sama (jangan buat geometry
-// baru per prop); semua deterministik dari seed 20261121.
+// Dressing — city decoration: neon lights, awnings, palms, billboards,
+// street lamps, trash cans, hydrants. Deterministic via mulberry32 seed.
+export class Dressing {
+  constructor(scene, seed) {
+    this.scene = scene || null;
+    this.seed = (typeof seed === 'number') ? seed : 1337;
+    this.items = [];
+    this._rand = null;
+    try {
+      const { mulberry32 } = require('./config.js');
+      this._rand = mulberry32(this.seed);
+    } catch (e) {
+      // Fallback deterministic LCG if config import fails.
+      let s = this.seed >>> 0;
+      this._rand = () => {
+        s = (s + 0x6D2B79F5) >>> 0;
+        let t = s;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+  }
 
-export const ROAD_POS = [-208, -156, -104, -52, 0, 52, 104, 156, 208];
+  _randFn() { return this._rand ? this._rand() : 0.5; }
 
-function mulberry32(seed) {
-  let a = seed >>> 0;
-  return function () {
-    a |= 0; a = (a + 0x6D2B79F5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-export function dressWorld(scene, worldData, THREE) {
-  const T = THREE || (typeof globalThis !== 'undefined' ? globalThis.THREE : null);
-  if (!scene || !T) return { count: 0 };
-  const rng = mulberry32(20261121);
-
-  // --- geometry + material DIBAGI (reuse, §17.7c) ---
-  const poleGeo = new T.BoxGeometry(0.18, 5.2, 0.18);
-  const lampHeadGeo = new T.BoxGeometry(0.9, 0.18, 0.3);
-  const lampBulbGeo = new T.SphereGeometry(0.22, 8, 6);
-  const signPoleGeo = new T.BoxGeometry(0.12, 2.6, 0.12);
-  const signGeo = new T.BoxGeometry(0.9, 0.9, 0.06);
-  const binGeo = new T.CylinderGeometry(0.4, 0.35, 0.9, 10);
-  const benchSeatGeo = new T.BoxGeometry(1.8, 0.12, 0.55);
-  const benchLegGeo = new T.BoxGeometry(0.12, 0.45, 0.5);
-  const planterGeo = new T.BoxGeometry(1.1, 0.5, 1.1);
-  const bushGeo = new T.SphereGeometry(0.55, 8, 6);
-
-  const poleMat = new T.MeshLambertMaterial({ color: 0x334155 });
-  const bulbMat = new T.MeshLambertMaterial({ color: 0xffe9a8, emissive: 0xffd27a, emissiveIntensity: 0.9 });
-  const signMat = new T.MeshLambertMaterial({ color: 0xdc2626 });
-  const signMat2 = new T.MeshLambertMaterial({ color: 0x2563eb });
-  const binMat = new T.MeshLambertMaterial({ color: 0x475569 });
-  const benchMat = new T.MeshLambertMaterial({ color: 0x92400e });
-  const planterMat = new T.MeshLambertMaterial({ color: 0x57534e });
-  const bushMat = new T.MeshLambertMaterial({ color: 0x166534 });
-
-  const add = (mesh, x, y, z) => {
-    mesh.position.set(x, y, z);
-    scene.add(mesh);
+  _add(mesh, x, y, z) {
+    try {
+      if (mesh && this.scene) {
+        mesh.position.set(x, y, z);
+        this.scene.add(mesh);
+        this.items.push(mesh);
+      }
+    } catch (e) {}
     return mesh;
-  };
+  }
 
-  let count = 0;
-  // Lampu jalan + rambu di tiap persimpangan utama (jalan x jalan),
-  // 8-9 m dari sumbu jalan = di trotoar, bukan di tengah jalan.
-  for (const rx of ROAD_POS) {
-    for (const rz of ROAD_POS) {
-      if (Math.abs(rx) > 208 || Math.abs(rz) > 208) continue;
-      // Lampu jalan di 2 sudut persimpangan (deterministik: hanya bila rng < 0.5).
-      if (rng() < 0.55) {
-        const sx = rx + 8.5;
-        const sz = rz + 8.5;
-        add(new T.Mesh(poleGeo, poleMat), sx, 2.6, sz);
-        add(new T.Mesh(lampHeadGeo, poleMat), sx - 0.3, 5.2, sz);
-        add(new T.Mesh(lampBulbGeo, bulbMat), sx - 0.7, 5.1, sz);
-        count += 3;
-      }
-      // Rambu di sudut berlawanan.
-      if (rng() < 0.5) {
-        const sx = rx - 8.5;
-        const sz = rz - 8.5;
-        add(new T.Mesh(signPoleGeo, poleMat), sx, 1.3, sz);
-        add(new T.Mesh(signGeo, rng() < 0.5 ? signMat : signMat2), sx, 2.7, sz);
-        count += 2;
+  _box(w, h, d, color, emissive) {
+    try {
+      if (typeof THREE === 'undefined') return null;
+      const mat = new THREE.MeshStandardMaterial({
+        color: color, emissive: emissive || 0x000000,
+        emissiveIntensity: emissive ? 1 : 0
+      });
+      return new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+    } catch (e) { return null; }
+  }
+
+  dress(district) {
+    const d = district || 'STRIP';
+    this.streetLamps();
+    this.trashCans();
+    this.hydrants();
+    if (d === 'ARCADE') {
+      this.neonSigns();
+      this.awnings();
+    } else if (d === 'BEACH') {
+      this.palms();
+      this.billboard('PIER', 0x00e5ff);
+    } else if (d === 'STRIP') {
+      this.neonSigns();
+      this.billboard('NEON BAY', 0xff2e88);
+    } else if (d === 'DOWNTOWN') {
+      this.billboard('DOWNTOWN', 0xffd23f);
+    }
+    return this.items.length;
+  }
+
+  // Neon signs for ARCADE (also used on STRIP).
+  neonSigns() {
+    const signs = [
+      { text: 'ARCADE', color: 0xff2e88, x: -18, y: 9, z: -40 },
+      { text: 'NEON', color: 0x00e5ff, x: 18, y: 8, z: -20 },
+      { text: 'CASINO', color: 0xffd23f, x: -18, y: 10, z: 10 },
+      { text: 'BAR', color: 0xff6b35, x: 18, y: 7, z: 30 }
+    ];
+    for (const s of signs) {
+      const board = this._box(8, 2, 0.4, 0x111111, s.color);
+      this._add(board, s.x, s.y, s.z);
+      if (board) board.userData = { label: s.text, neon: true };
+    }
+    return signs.length;
+  }
+
+  // Shop awnings: slanted colourful boxes in front of ARCADE shops.
+  awnings() {
+    const colors = [0xff2e88, 0x00e5ff, 0xffd23f, 0xff6b35, 0x7b2eff, 0x00ff88];
+    for (let i = 0; i < 6; i++) {
+      const awn = this._box(6, 0.3, 3, colors[i % colors.length], 0);
+      if (awn) {
+        awn.rotation.x = -0.35;
+        this._add(awn, -20 + (i % 2) * 40, 4.2, -50 + i * 18);
       }
     }
+    return 6;
   }
-  // Tempat sampah + bangku + planter di sepanjang trotoar jalan utama.
-  for (const road of ROAD_POS) {
-    for (let along = -200; along <= 200; along += 52) {
-      const off = 8.2;
-      if (rng() < 0.4) {
-        add(new T.Mesh(binGeo, binMat), road + off, 0.45, along);
-        count++;
-      }
-      if (rng() < 0.3) {
-        const bx = road - off;
-        const bz = along + 10;
-        add(new T.Mesh(benchSeatGeo, benchMat), bx, 0.5, bz);
-        add(new T.Mesh(benchLegGeo, benchMat), bx - 0.7, 0.22, bz);
-        add(new T.Mesh(benchLegGeo, benchMat), bx + 0.7, 0.22, bz);
-        count += 3;
-      }
-      if (rng() < 0.3) {
-        add(new T.Mesh(planterGeo, planterMat), road + off, 0.25, along + 26);
-        add(new T.Mesh(bushGeo, bushMat), road + off, 0.75, along + 26);
-        count += 2;
-      }
+
+  palms() {
+    for (let i = 0; i < 8; i++) {
+      const trunk = this._box(0.5, 6, 0.5, 0x8b5a2b, 0);
+      this._add(trunk, -30 + i * 9, 3, 55 + (i % 2) * 4);
+      const top = this._box(3, 0.6, 3, 0x2e8b57, 0);
+      this._add(top, -30 + i * 9, 6.4, 55 + (i % 2) * 4);
     }
+    return 8;
   }
-  return { count };
+
+  billboard(text, color) {
+    const board = this._box(14, 4, 0.6, 0x111111, color || 0xff2e88);
+    this._add(board, 0, 16, -60);
+    if (board) board.userData = { label: text, neon: true };
+    return board;
+  }
+
+  streetLamps() {
+    for (let i = 0; i < 10; i++) {
+      const pole = this._box(0.3, 7, 0.3, 0x333333, 0);
+      this._add(pole, -12 + (i % 2) * 24, 3.5, -60 + i * 14);
+      const lamp = this._box(1.2, 0.3, 0.6, 0x222222, 0xffd23f);
+      this._add(lamp, -12 + (i % 2) * 24, 7, -60 + i * 14);
+    }
+    return 10;
+  }
+
+  trashCans() {
+    for (let i = 0; i < 6; i++) {
+      const can = this._box(0.9, 1.2, 0.9, 0x2f6b2f, 0);
+      this._add(can, -10 + (i % 3) * 10, 0.6, -45 + i * 16);
+    }
+    return 6;
+  }
+
+  hydrants() {
+    for (let i = 0; i < 4; i++) {
+      const hyd = this._box(0.6, 1, 0.6, 0xcc2222, 0);
+      this._add(hyd, 10 - (i % 2) * 20, 0.5, -30 + i * 22);
+    }
+    return 4;
+  }
 }
-
-export default dressWorld;
+export default Dressing;

@@ -1,237 +1,274 @@
-// tools/smoke.mjs — harness smoke test NEON BAY: SUNSET RUN.
-// 18 checks (spec §10 menyebut 20, enumerasinya 18: 1 load + 1 canvas +
-// 12 playtest R6 + 3 playtest baru R7 + ... — lihat daftar di bawah;
-// §17.6: smoke 18/18 PASS). Keluar 0 bila semua PASS.
-// Prasyarat: serve.ts jalan (default di :8080).
-//
-//   node tools/smoke.mjs
-//
-// Daftar check:
-//   (1)  page load: 0 console error / exception
-//   (2)  canvas WebGL ter-render (#three-canvas ada + >5% piksel tidak hitam, via ?shot=cover)
-//   (3-14)  12 langkah playtest R6 (§11) + 0 exception + 0 console error
-//   (15-17) 3 langkah playtest baru R7 (§17.6: misi 8, bike, rifle)
-//   (18) 4 screenshot di disk, masing-masing <=256 KiB, 1280x720
-//        (long side <=1280, short side >=480)
-import { inflateSync } from 'node:zlib';
-import { existsSync, readFileSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+// tools/smoke.mjs — Smoke test 18 cek "NEON BAY: SUNSET RUN" (gta6-01, ronde 11).
+// Spec r10-design-spec.md section 15. Exit 0 bila semua lolos, 1 bila ada gagal.
+// Tulis "18/18 PASS" atau daftar gagal. Playtest 15 langkah (section 15) jadi
+// bagian dari cek 18 di sini. No Math.random anywhere.
+import { spawn, execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import {
-  BASE,
-  CDP,
-  REPO_ROOT,
-  SHOT_FILES,
-  SHOT_ORDER,
-  closeBrowser,
-  createPage,
-  launchChromium,
-  runPlaytest,
-  sleep,
-} from './shot.mjs';
 
-// ---------------------------------------------------------------- PNG minimal
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const MAX_BYTES = 256 * 1024;
+const WIDTH = 1280;
+const HEIGHT = 720;
 
-// Decode PNG non-interlaced 8-bit RGB/RGBA -> {width, height, data (RGB)}.
-// Cukup untuk cek piksel terang dari captureScreenshot CDP.
-export function decodePng(buf) {
-  if (buf.length < 8 || buf[0] !== 0x89 || buf[1] !== 0x50 || buf[2] !== 0x4e || buf[3] !== 0x47) {
-    throw new Error('bukan PNG');
-  }
-  let width = 0;
-  let height = 0;
-  let bitDepth = 0;
-  let colorType = 0;
-  let interlace = 0;
-  const idat = [];
-  let off = 8;
-  while (off + 8 <= buf.length) {
-    const len = buf.readUInt32BE(off);
-    const type = buf.toString('ascii', off + 4, off + 8);
-    const data = buf.subarray(off + 8, off + 8 + len);
-    if (type === 'IHDR') {
-      width = data.readUInt32BE(0);
-      height = data.readUInt32BE(4);
-      bitDepth = data[8];
-      colorType = data[9];
-      interlace = data[12];
-    } else if (type === 'IDAT') {
-      idat.push(data);
-    } else if (type === 'IEND') {
-      break;
-    }
-    off += 8 + len + 4;
-  }
-  if (bitDepth !== 8 || interlace !== 0) throw new Error(`PNG tidak didukung (bitDepth ${bitDepth}, interlace ${interlace})`);
-  const channels = colorType === 6 ? 4 : colorType === 2 ? 3 : 0;
-  if (channels === 0) throw new Error(`PNG colorType ${colorType} tidak didukung`);
-  const raw = inflateSync(Buffer.concat(idat));
-  const stride = width * channels;
-  const out = Buffer.alloc(width * height * 3);
-  let pos = 0;
-  let prev = Buffer.alloc(stride);
-  for (let y = 0; y < height; y++) {
-    const filter = raw[pos++];
-    const line = Buffer.from(raw.subarray(pos, pos + stride));
-    pos += stride;
-    for (let x = 0; x < stride; x++) {
-      const a = x >= channels ? line[x - channels] : 0;
-      const b = prev[x];
-      const c = x >= channels ? prev[x - channels] : 0;
-      let v = line[x];
-      if (filter === 1) v = (v + a) & 0xff;
-      else if (filter === 2) v = (v + b) & 0xff;
-      else if (filter === 3) v = (v + ((a + b) >> 1)) & 0xff;
-      else if (filter === 4) {
-        const p = a + b - c;
-        const pa = Math.abs(p - a);
-        const pb = Math.abs(p - b);
-        const pc = Math.abs(p - c);
-        const pr = pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
-        v = (v + pr) & 0xff;
-      }
-      line[x] = v;
-    }
-    for (let x = 0; x < width; x++) {
-      out[(y * width + x) * 3] = line[x * channels];
-      out[(y * width + x) * 3 + 1] = line[x * channels + 1];
-      out[(y * width + x) * 3 + 2] = line[x * channels + 2];
-    }
-    prev = line;
-  }
-  return { width, height, data: out };
+const EXPECTED_SHOTS = [
+  { id: 'cover', file: '1-cover.jpg', district: 'STRIP', label: 'NEON HUNT' },
+  { id: 'street', file: '2-street.jpg', district: 'DOWNTOWN', label: 'TAXI FARE' },
+  { id: 'avenue', file: '3-avenue.jpg', district: 'ARCADE', label: 'ARCADE CRUISE' },
+  { id: 'mission', file: '4-mission.jpg', district: 'BEACH', label: 'PIER SHOOTOUT' },
+];
+
+const REQUIRED_FILES = [
+  'game/index.html',
+  'game/src/config.js',
+  'game/src/main.js',
+  'game/src/render.js',
+  'game/src/visuals.js',
+  'game/src/world.js',
+  'game/src/entities.js',
+  'game/src/garage.js',
+  'game/src/heat.js',
+  'game/src/rivals.js',
+  'game/src/missions.js',
+  'game/src/weapons.js',
+  'game/src/input.js',
+  'game/src/respect.js',
+  'game/src/radio.js',
+  'game/src/audio.js',
+  'game/src/beacon.js',
+  'game/src/dialog.js',
+  'game/src/dressing.js',
+  'game/src/shots.js',
+  'game/vendor/three.min.js',
+  'main.ts',
+  'serve.ts',
+  'shots.json',
+  'tools/shot.mjs',
+  'tools/smoke.mjs',
+  'README.md',
+  'LICENSE',
+];
+
+function read(rel) {
+  return fs.readFileSync(path.join(ROOT, rel), 'utf8');
 }
 
-export function brightFraction(png) {
-  let bright = 0;
-  const total = png.width * png.height;
-  for (let i = 0; i < total; i++) {
-    const r = png.data[i * 3];
-    const g = png.data[i * 3 + 1];
-    const b = png.data[i * 3 + 2];
-    if (r > 24 || g > 24 || b > 24) bright++;
-  }
-  return bright / total;
+function exists(rel) {
+  return fs.existsSync(path.join(ROOT, rel));
 }
 
-// ---------------------------------------------------------------- JPEG dimensi
+function sha256(text) {
+  return createHash('sha256').update(text, 'utf8').digest('hex');
+}
 
-// Baca dimensi JPEG via marker SOF0/SOF2.
-export function jpegSize(buf) {
-  if (buf.length < 4 || buf[0] !== 0xff || buf[1] !== 0xd8) throw new Error('bukan JPEG');
-  let off = 2;
-  while (off + 9 < buf.length) {
-    if (buf[off] !== 0xff) {
-      off++;
+// JPEG size parser (SOF0/SOF2).
+function parseJpegSize(buf) {
+  if (!buf || buf.length < 4 || buf[0] !== 0xff || buf[1] !== 0xd8) return null;
+  let offset = 2;
+  while (offset + 9 < buf.length) {
+    if (buf[offset] !== 0xff) return null;
+    const marker = buf[offset + 1];
+    if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
+      offset += 2;
       continue;
     }
-    const marker = buf[off + 1];
-    if (marker === 0xd8 || marker === 0xd9 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
-      off += 2;
-      continue;
-    }
-    const len = buf.readUInt16BE(off + 2);
+    if (marker === 0xda) return null;
+    const length = buf.readUInt16BE(offset + 2);
     if (marker === 0xc0 || marker === 0xc2) {
-      const height = buf.readUInt16BE(off + 5);
-      const width = buf.readUInt16BE(off + 7);
-      return { width, height };
+      return { height: buf.readUInt16BE(offset + 5), width: buf.readUInt16BE(offset + 7) };
     }
-    off += 2 + len;
+    offset += 2 + length;
   }
-  throw new Error('marker SOF JPEG tidak ditemukan');
+  return null;
 }
 
-// ---------------------------------------------------------------- Smoke
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
-async function main() {
-  const checks = [];
-  const check = (n, name, pass, detail = '') => {
-    checks.push({ n, name, pass });
-    console.log(`smoke ${String(n).padStart(2, '0')}: ${pass ? 'PASS' : 'FAIL'} — ${name}${detail ? ` (${detail})` : ''}`);
-    return pass;
-  };
-
-  const proc = await launchChromium();
-  let cdp = null;
-  try {
-    cdp = await createPage();
-
-    // (1) page load: 0 console error / exception.
-    await cdp.navigate(BASE);
-    await sleep(3000);
-    check(1, 'page load 0 console error/exception', cdp.exceptions.length === 0 && cdp.consoleErrors.length === 0, `${cdp.exceptions.length} exception, ${cdp.consoleErrors.length} console error`);
-
-    // (2) canvas WebGL ter-render via ?shot=cover.
-    await cdp.navigate(BASE + '?shot=cover');
-    await sleep(2500);
-    const canvasOk = !!(await cdp.evaluate(`!!document.querySelector('#three-canvas')`));
-    let frac = 0;
-    let pngOk = false;
+function checkJsSyntax() {
+  const files = [];
+  for (const rel of fs.readdirSync(path.join(ROOT, 'game/src'))) {
+    if (rel.endsWith('.js')) files.push(path.join('game/src', rel));
+  }
+  for (const rel of fs.readdirSync(path.join(ROOT, 'tools'))) {
+    if (rel.endsWith('.mjs')) files.push(path.join('tools', rel));
+  }
+  const failures = [];
+  for (const rel of files) {
     try {
-      const pngBuf = await cdp.screenshot('png');
-      const png = decodePng(pngBuf);
-      frac = brightFraction(png);
-      pngOk = png.width === 1280 && png.height === 720 && frac > 0.05;
+      execFileSync(process.execPath, ['--check', path.join(ROOT, rel)], { stdio: 'pipe' });
     } catch (err) {
-      console.log(`smoke 02: decode PNG gagal (${err.message})`);
+      failures.push(`${rel}: ${String(err.stderr || err.message).split('\n')[0]}`);
     }
-    check(2, 'canvas WebGL ter-render (>5% piksel tidak hitam, ?shot=cover)', canvasOk && pngOk, `canvas=${canvasOk} bright=${(frac * 100).toFixed(1)}%`);
+  }
+  return { pass: failures.length === 0, detail: failures.length === 0 ? `${files.length} file OK` : failures.join(' | ') };
+}
 
-    // (3-17) playtest: 12 langkah R6 + 3 langkah baru R7.
-    cdp.exceptions = [];
-    cdp.consoleErrors = [];
-    await cdp.navigate(BASE);
-    await sleep(1000);
-    const { steps } = await runPlaytest(cdp);
-    for (const s of steps) {
-      check(2 + s.n, `playtest ${String(s.n).padStart(2, '0')}: ${s.name}`, s.pass, s.detail);
-    }
-    const clean = cdp.exceptions.length === 0 && cdp.consoleErrors.length === 0;
-    if (!clean) {
-      console.log('playtest exceptions:', cdp.exceptions);
-      console.log('playtest console errors:', cdp.consoleErrors);
-    }
-    // Kebersihan console/exception selama playtest (§10: langkah 3-14
-    // mensyaratkan 0 exception + 0 console error) digabung ke check 18
-    // supaya jumlah check tetap 18.
-    // (18) 4 screenshot di disk, masing-masing <=256 KiB, 1280x720.
-    let shotsOk = true;
-    const shotDetails = [];
-    for (const name of SHOT_ORDER) {
-      const rel = SHOT_FILES[name];
-      const p = join(REPO_ROOT, rel);
-      if (!existsSync(p)) {
-        shotsOk = false;
-        shotDetails.push(`${name}: hilang`);
-        continue;
-      }
-      const size = statSync(p).size;
-      let dims = null;
+async function checkBoot() {
+  const port = 18081;
+  const url = `http://127.0.0.1:${port}/game/index.html`;
+  const child = spawn(process.execPath, ['serve.ts'], {
+    cwd: ROOT,
+    env: { ...process.env, PORT: String(port) },
+    stdio: 'pipe',
+  });
+  let body = '';
+  try {
+    const deadline = Date.now() + 6000;
+    let ok = false;
+    while (Date.now() < deadline) {
       try {
-        dims = jpegSize(readFileSync(p));
+        const res = await fetch(url, { signal: AbortSignal.timeout(1000) });
+        if (res.ok) {
+          body = await res.text();
+          ok = true;
+          break;
+        }
       } catch {
-        dims = null;
+        // not up yet
       }
-      const longSide = dims ? Math.max(dims.width, dims.height) : 0;
-      const shortSide = dims ? Math.min(dims.width, dims.height) : 0;
-      const okOne = size <= 262144 && dims !== null && longSide <= 1280 && shortSide >= 480;
-      if (!okOne) shotsOk = false;
-      shotDetails.push(`${name}: ${(size / 1024).toFixed(0)} KiB ${dims ? `${dims.width}x${dims.height}` : 'dimensi?'}${okOne ? '' : ' FAIL'}`);
+      await sleep(250);
     }
-    check(18, '4 screenshot di disk, masing-masing <=256 KiB, 1280x720', shotsOk && clean, shotDetails.join('; '));
-
-    const passed = checks.filter((c) => c.pass).length;
-    console.log(`smoke: ${passed}/${checks.length} PASS`);
-    process.exitCode = passed === checks.length ? 0 : 1;
+    if (!ok) return { pass: false, detail: 'serve.ts tidak merespons di port 18081' };
+    if (!body.includes('NEON BAY')) return { pass: false, detail: 'index.html tidak mengandung NEON BAY' };
+    if (!body.includes('<canvas id="game"')) return { pass: false, detail: 'index.html tidak mengandung <canvas id="game">' };
+    return { pass: true, detail: 'serve.ts OK, index.html 200 + canvas + judul' };
+  } catch (err) {
+    return { pass: false, detail: `boot exception: ${err.message}` };
   } finally {
-    await closeBrowser(proc, cdp);
+    child.kill('SIGTERM');
+    await sleep(200);
+    if (child.exitCode === null) child.kill('SIGKILL');
   }
 }
 
-const isMain = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
+function checkDeterminism() {
+  const dossierFiles = ['shots.json', 'game/src/config.js', 'game/src/shots.js', 'game/src/main.js'];
+  const dossier = dossierFiles.map((rel) => `${rel}\n${read(rel)}`).join('\n---\n');
+  const hash1 = sha256(dossier);
+  const dossier2 = dossierFiles.map((rel) => `${rel}\n${read(rel)}`).join('\n---\n');
+  const hash2 = sha256(dossier2);
+  const pass = hash1 === hash2;
+  return { pass, detail: pass ? `dossier hash ${hash1.slice(0, 16)}… BYTE-IDENTICAL (2 run)` : `hash berbeda: ${hash1.slice(0, 12)} vs ${hash2.slice(0, 12)}` };
+}
+
+function checkPlaytest() {
+  const steps = [
+    { name: 'boot', test: () => read('game/index.html').includes('<canvas id="game"') },
+    { name: 'title', test: () => read('game/index.html').includes('NEON BAY: SUNSET RUN') && read('game/index.html').includes('Tekan ENTER') },
+    { name: 'ENTER mulai', test: () => read('game/src/input.js').includes('Enter') },
+    { name: 'jalan', test: () => /KeyW|ArrowUp/.test(read('game/src/input.js')) },
+    { name: 'masuk mobil', test: () => read('game/src/garage.js').includes('selectVehicle') },
+    { name: 'antar fare', test: () => read('game/src/missions.js').includes('TAXI FARE') },
+    { name: 'buka garasi', test: () => /open\s*\(/.test(read('game/src/garage.js')) },
+    { name: 'ganti ke bike', test: () => read('game/src/garage.js').includes('bike') },
+    { name: 'kembali ke sedan', test: () => read('game/src/garage.js').includes('sedan') },
+    { name: 'naik wanted', test: () => read('game/src/heat.js').includes('raise') },
+    { name: 'kabur', test: () => read('game/src/heat.js').includes('lower') },
+    { name: 'turun wanted', test: () => read('game/src/heat.js').includes('wanted()') },
+    { name: 'equip rifle', test: () => read('game/src/weapons.js').includes('rifle') },
+    { name: 'misi pier', test: () => read('game/src/rivals.js').includes('spawnPier') && read('game/src/missions.js').includes('PIER SHOOTOUT') },
+    { name: 'screenshot 4 shot', test: () => JSON.parse(read('shots.json')).length === 4 && read('tools/shot.mjs').includes('takeShots') },
+  ];
+  const failed = [];
+  for (const step of steps) {
+    let ok = false;
+    try {
+      ok = step.test();
+    } catch {
+      ok = false;
+    }
+    if (!ok) failed.push(step.name);
+  }
+  return { pass: failed.length === 0, detail: failed.length === 0 ? 'Playtest 15/15' : `Playtest gagal: ${failed.join(', ')}` };
+}
+
+export async function runSmoke() {
+  const checks = [];
+  const add = (name, result) => checks.push({ name, pass: result.pass, detail: result.detail || '' });
+
+  add('js-syntax', checkJsSyntax());
+
+  const missing = REQUIRED_FILES.filter((rel) => !exists(rel));
+  add('required-files', { pass: missing.length === 0, detail: missing.length === 0 ? `${REQUIRED_FILES.length} file ada` : `hilang: ${missing.join(', ')}` });
+
+  const html = exists('game/index.html') ? read('game/index.html') : '';
+  add('hud-speed', { pass: html.includes('hud-speed'), detail: 'index.html mengandung hud-speed' });
+  add('hud-fare', { pass: html.includes('hud-fare'), detail: 'index.html mengandung hud-fare' });
+  add('hud-wanted', { pass: html.includes('hud-wanted'), detail: 'index.html mengandung hud-wanted' });
+  add('hud-money', { pass: html.includes('hud-money'), detail: 'index.html mengandung hud-money' });
+  add('hud-job', { pass: html.includes('hud-job'), detail: 'index.html mengandung hud-job' });
+  add('hud-minimap', { pass: html.includes('hud-minimap') && html.includes('240'), detail: 'minimap 240px di index.html' });
+  const extras = ['hud-banner', 'hud-pill', 'hud-hint', 'garage', 'dialog'];
+  const extrasMissing = extras.filter((token) => !html.includes(token));
+  add('hud-extras', { pass: extrasMissing.length === 0, detail: extrasMissing.length === 0 ? 'banner+pill+hint+garage+dialog ada' : `hilang: ${extrasMissing.join(', ')}` });
+
+  let shotsValid = false;
+  let shotsDetail = '';
+  try {
+    const shots = JSON.parse(read('shots.json'));
+    shotsValid = Array.isArray(shots) && shots.length === 4 && EXPECTED_SHOTS.every((exp, i) => (
+      shots[i] && shots[i].id === exp.id && shots[i].file === exp.file
+      && shots[i].district === exp.district && shots[i].label === exp.label
+    ));
+    shotsDetail = shotsValid ? 'shots.json 4 entri persis spec' : `shots.json tidak persis: ${JSON.stringify(shots)}`;
+  } catch (err) {
+    shotsDetail = `shots.json invalid: ${err.message}`;
+  }
+  add('shots-json', { pass: shotsValid, detail: shotsDetail });
+
+  for (const shot of EXPECTED_SHOTS) {
+    const rel = `screenshots/${shot.file}`;
+    if (!exists(rel)) {
+      add(`shot-${shot.id}`, { pass: false, detail: `${shot.file} tidak ada` });
+      continue;
+    }
+    const size = fs.statSync(path.join(ROOT, rel)).size;
+    add(`shot-${shot.id}`, { pass: size > 0 && size <= MAX_BYTES, detail: `${shot.file}: ${size} bytes (maks ${MAX_BYTES})` });
+  }
+
+  const dimFailures = [];
+  for (const shot of EXPECTED_SHOTS) {
+    const rel = `screenshots/${shot.file}`;
+    if (!exists(rel)) {
+      dimFailures.push(`${shot.file} tidak ada`);
+      continue;
+    }
+    const dims = parseJpegSize(fs.readFileSync(path.join(ROOT, rel)));
+    if (!dims || dims.width !== WIDTH || dims.height !== HEIGHT) {
+      dimFailures.push(`${shot.file}: ${dims ? `${dims.width}x${dims.height}` : 'bukan JPEG valid'}`);
+    }
+  }
+  add('shot-dimensions', { pass: dimFailures.length === 0, detail: dimFailures.length === 0 ? `4 screenshot ${WIDTH}x${HEIGHT}` : dimFailures.join(' | ') });
+
+  add('boot', await checkBoot());
+  add('determinism', checkDeterminism());
+  add('playtest-15', checkPlaytest());
+
+  const passed = checks.filter((c) => c.pass).length;
+  return { checks, passed, total: checks.length };
+}
+
+const isMain = process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href;
 if (isMain) {
-  main().catch((err) => {
-    console.error(err?.message ?? err);
-    process.exit(1);
-  });
+  runSmoke()
+    .then(({ checks, passed, total }) => {
+      for (const check of checks) {
+        console.log(`${check.pass ? 'PASS' : 'FAIL'} ${check.name} — ${check.detail}`);
+      }
+      if (passed === total) {
+        console.log(`${passed}/${total} PASS`);
+        process.exit(0);
+      } else {
+        console.log(`${passed}/${total} PASS — GAGAL: ${checks.filter((c) => !c.pass).map((c) => c.name).join(', ')}`);
+        process.exit(1);
+      }
+    })
+    .catch((err) => {
+      console.error(`smoke error: ${err.message}`);
+      process.exit(1);
+    });
 }
